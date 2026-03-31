@@ -1,0 +1,14 @@
+{
+  "network": "sepolia",
+  "treasury": "0x5f4a0b0a0DFC02a61781De87F3Ba987f2d9e50b0",
+  "governance": "0x2Eb00688ceD837C6B05C3c5439f27535e6A78a33",
+  "auditorAccess": "0xd9bB3d8B0EA6115cE64B87e885645e2fF75030a9",
+  "deployer": "0x86E25598E12a7116eBb3C2bD41Ad80bdEC4a9bEf",
+  "blockNumber": 10539615,
+  "txHashes": {
+    "treasury": "0x8ff5642ae50539b21a3c92d8836d70520f61c42afc5f42e6cc1ffe63bc34054b",
+    "governance": "0x77ec78fd7f6dbc84f1ff47691c5f45051ee946effa58d9de6ce9f59d30693415",
+    "auditorAccess": "0x9ff006b394f3bebee7299b273771befd2f2702322610ad24f9b3055a8fee7e7e"
+  },
+  "timestamp": "2026-03-28T12:30:52.269Z"
+}

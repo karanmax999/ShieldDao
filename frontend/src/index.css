@@ -1,0 +1,97 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #0A0B0D;
+  --bg-secondary: #111318;
+  --bg-card: #161920;
+  --bg-card-hover: #1C2028;
+  --border: #1E2330;
+  --border-active: #2A3347;
+  --amber: #F5A623;
+  --amber-dim: #8B5E14;
+  --amber-glow: rgba(245, 166, 35, 0.15);
+  --jade: #2ECC71;
+  --jade-dim: #1A7A43;
+  --red: #E74C3C;
+  --red-dim: #8B2B20;
+  --text-primary: #E8EAF0;
+  --text-secondary: #6B7A99;
+  --text-muted: #3D4A63;
+  --mono: 'Space Mono', monospace;
+  --display: 'Syne', sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--display);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.encrypted-value {
+  font-family: var(--mono);
+  background: linear-gradient(
+    90deg,
+    var(--text-muted) 25%,
+    var(--amber)      50%,
+    var(--text-muted) 75%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 3s linear infinite;
+  letter-spacing: 0.1em;
+}
+
+@keyframes scan {
+  from { width: 0%; }
+  to   { width: var(--target-width); }
+}
+
+@keyframes heroFloat {
+  0%, 100% { transform: translateY(0px)   rotate(0deg); }
+  33%       { transform: translateY(-10px) rotate(0.3deg); }
+  66%       { transform: translateY(-6px)  rotate(-0.2deg); }
+}
+
+@keyframes pulse-amber {
+  0%, 100% { box-shadow: 0 0 0 0   rgba(245, 166, 35, 0.4); }
+  50%       { box-shadow: 0 0 0 8px rgba(245, 166, 35, 0);   }
+}
+
+@keyframes terminal-scan {
+  from { transform: translateY(-50%); }
+  to   { transform: translateY(0%); }
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 1000;
+  opacity: 0.4;
+}
+
+::-webkit-scrollbar       { width: 4px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb { background: var(--border-active); border-radius: 2px; }

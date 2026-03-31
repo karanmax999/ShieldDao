@@ -25,9 +25,19 @@ export default function Dashboard() {
   const loadStats = useCallback(async () => {
     if (!treasuryRead) return
     try {
+      // Fetch admin first so Operator Terminal doesn't disappear on RPC failure
+      const admin = await treasuryRead.admin()
+      setAdminAddress(admin)
+
       // Fetch member count from Treasury events (simplified for demo)
-      const addedFilter = treasuryRead.filters.MemberAdded()
-      const addedEvents = await treasuryRead.queryFilter(addedFilter)
+      let addedEventsLength = 0
+      try {
+        const addedFilter = treasuryRead.filters.MemberAdded()
+        const addedEvents = await treasuryRead.queryFilter(addedFilter)
+        addedEventsLength = addedEvents.length
+      } catch (evtErr) {
+        console.warn("RPC Warning: Failed to fetch MemberAdded events", evtErr)
+      }
       
       let propCount = 0
       if (governance) {
@@ -37,14 +47,11 @@ export default function Dashboard() {
       }
 
       setStats({
-        memberCount: addedEvents.length,
+        memberCount: addedEventsLength,
         proposalCount: propCount,
         activeProposals: propCount > 0 ? 1 : 0,
         loading: false
       })
-
-      const admin = await treasuryRead.admin()
-      setAdminAddress(admin)
     } catch (e) {
       console.error("Dashboard load error:", e)
       setStats(s => ({ ...s, loading: false }))

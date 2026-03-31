@@ -1,49 +1,54 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Users, UserPlus, Activity, RefreshCw, CheckCircle2 } from 'lucide-react'
 import { CyberCard } from './CyberCard'
 import { Button } from './button'
+import { TerminalLog, type TerminalLogHandle } from './TerminalLog'
 import { useContracts } from '../../hooks/useContracts'
 import { cn } from '../../lib/utils'
+import { EventLog } from 'ethers'
 
 interface RosterMember {
   address: string
+  role: string
   since: string
 }
 
 export const OperatorTerminal = () => {
-  const { treasuryRead, treasury } = useContracts()
+  const { treasury, treasuryRead } = useContracts()
   const [roster, setRoster] = useState<RosterMember[]>([])
   const [requests, setRequests] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [txLoading, setTxLoading] = useState<string | null>(null)
+  const logRef = useRef<TerminalLogHandle>(null)
 
   const loadData = useCallback(async () => {
     if (!treasuryRead) return
     setLoading(true)
     try {
-      // Load active members from events
+      // Load current members
       const filter = treasuryRead.filters.MemberAdded()
       const events = await treasuryRead.queryFilter(filter)
-      const members = await Promise.all(events.map(async (e: any) => {
-        const block = await e.getBlock()
-        return {
-          address: e.args.member,
-          since: new Date(block.timestamp * 1000).toLocaleDateString()
-        }
-      }))
-      setRoster(members.reverse())
+      
+      const members = events
+        .filter((e): e is EventLog => e instanceof EventLog)
+        .map(e => ({
+          address: e.args[0] as string,
+          role: 'MEMBER',
+          since: 'RECENT'
+        }))
+        
+      setRoster(members)
 
-      // Load simulated requests from localStorage
+      // Load pending from local storage (simulation of off-chain request queue)
       const saved = localStorage.getItem('shield_pending_enlistments')
       if (saved) {
-        const reqs = JSON.parse(saved) as string[]
+        const reqs = JSON.parse(saved)
         // Filter out those who are already members
-        const filtered = reqs.filter(addr => !members.some(m => m.address.toLowerCase() === addr.toLowerCase()))
-        setRequests(filtered)
-        localStorage.setItem('shield_pending_enlistments', JSON.stringify(filtered))
+        const memberAddresses = members.map(m => m.address.toLowerCase())
+        setRequests(reqs.filter((r: string) => !memberAddresses.includes(r.toLowerCase())))
       }
     } catch (e) {
-      console.error("Operator data load error:", e)
+      console.error("Failed to load operator data:", e)
     } finally {
       setLoading(false)
     }
@@ -51,58 +56,80 @@ export const OperatorTerminal = () => {
 
   useEffect(() => {
     loadData()
-    // Listen for custom "enlist" events in the same tab for demo
-    const handleEnlist = () => loadData()
-    window.addEventListener('shield_new_enlistment', handleEnlist)
-    return () => window.removeEventListener('shield_new_enlistment', handleEnlist)
+    // Listen for new requests from the same session
+    const handleNew = () => loadData()
+    window.addEventListener('shield_new_enlistment', handleNew)
+    return () => window.removeEventListener('shield_new_enlistment', handleNew)
   }, [loadData])
 
   const approve = async (addr: string) => {
     if (!treasury) return
     try {
       setTxLoading(addr)
+      logRef.current?.addLog(`Authorizing enrollment for ${addr.slice(0, 8)}...`, 'info')
+      
       const tx = await treasury.addMember(addr)
+      logRef.current?.addLog(`Membership tx broadcasted. Awaiting Sepolia confirmation...`, 'pending')
+      
       await tx.wait()
+      logRef.current?.addLog(`Member ${addr.slice(0, 6)} successfully onboarded to ShieldDAO.`, 'success')
+      
+      // Clean up local storage
+      const saved = localStorage.getItem('shield_pending_enlistments')
+      if (saved) {
+        const reqs = JSON.parse(saved)
+        localStorage.setItem('shield_pending_enlistments', JSON.stringify(reqs.filter((r: string) => r.toLowerCase() !== addr.toLowerCase())))
+      }
+      
       loadData()
     } catch (e) {
       console.error("Admission failed:", e)
+      logRef.current?.addLog(`Authorization failed. Check network status.`, 'error')
     } finally {
       setTxLoading(null)
     }
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      {/* Enrollment Queue */}
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-20">
+      {/* Pending Requests */}
       <CyberCard variant="amber">
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <UserPlus size={18} className="text-amber" />
-            <h3 className="font-display font-bold text-lg text-text-primary uppercase tracking-tight">Enrollment Queue</h3>
+            <div className="p-2 bg-amber/10 rounded-lg">
+              <UserPlus size={20} className="text-amber" />
+            </div>
+            <div>
+              <h3 className="font-syne font-bold text-lg text-text-primary">ADMISSION QUEUE</h3>
+              <p className="text-[10px] font-mono text-text-muted">PENDING AUTHORIZATION</p>
+            </div>
           </div>
-          <span className="font-mono text-[10px] bg-amber/10 text-amber px-2 py-0.5 rounded border border-amber/20">
-            {requests.length} PENDING
-          </span>
+          <button onClick={loadData} disabled={loading} className="p-2 hover:bg-white/5 rounded-full transition-colors text-text-muted">
+            <RefreshCw size={14} className={cn(loading && "animate-spin")} />
+          </button>
         </div>
 
         <div className="space-y-3 min-h-[200px]">
           {requests.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-10 opacity-30">
-              <Activity size={32} className="mb-2" />
-              <p className="font-mono text-[10px] uppercase tracking-widest">No active requests</p>
+            <div className="h-40 flex flex-col items-center justify-center border border-dashed border-white/5 rounded-xl bg-black/20">
+              <Activity size={24} className="text-text-muted/20 mb-3" />
+              <p className="text-[11px] font-mono text-text-muted">NO PENDING REQUESTS</p>
             </div>
           ) : (
-            requests.map(addr => (
-              <div key={addr} className="p-4 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between group hover:border-amber/30 transition-all">
-                <div className="font-mono text-xs text-text-primary">
-                  {addr.slice(0, 12)}...{addr.slice(-8)}
+            requests.map((addr) => (
+              <div key={addr} className="flex items-center justify-between p-4 bg-white/5 border border-white/10 rounded-xl hover:border-amber/30 transition-all group">
+                <div className="space-y-1">
+                  <p className="text-sm font-mono text-text-primary">{addr.slice(0, 8)}...{addr.slice(-6)}</p>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] px-1.5 py-0.5 bg-amber/10 text-amber border border-amber/20 rounded uppercase font-mono">GUEST</span>
+                  </div>
                 </div>
                 <Button 
-                  onClick={() => approve(addr)}
+                  onClick={() => approve(addr)} 
                   disabled={!!txLoading}
-                  className="bg-amber text-bg-primary font-bold text-[10px] px-4 py-2 rounded-lg"
+                  className="bg-amber text-bg-primary hover:bg-amber/90 px-6 font-bold shadow-[0_0_20px_rgba(245,166,35,0.2)]"
                 >
-                  {txLoading === addr ? "SIGNING..." : "AUTHORIZE"}
+                  {txLoading === addr ? "SIGNING..." : "ADMIT"}
                 </Button>
               </div>
             ))
@@ -110,30 +137,31 @@ export const OperatorTerminal = () => {
         </div>
       </CyberCard>
 
-      {/* Roster Feed */}
-      <CyberCard>
-        <div className="flex justify-between items-center mb-6">
-          <div className="flex items-center gap-3">
-            <Users size={18} className="text-text-primary" />
-            <h3 className="font-display font-bold text-lg text-text-primary uppercase tracking-tight">Active Roster</h3>
-          </div>
-          <button onClick={loadData} disabled={loading}>
-            <RefreshCw size={14} className={cn("text-text-muted", loading && "animate-spin")} />
-          </button>
-        </div>
-
-        <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
-          {roster.map(m => (
-            <div key={m.address} className="flex items-center justify-between p-3 rounded-lg border border-white/[0.03] hover:bg-white/[0.02] transition-colors">
-              <div className="flex items-center gap-3">
-                <CheckCircle2 size={12} className="text-jade" />
-                <span className="font-mono text-[10px] text-text-secondary">{m.address.slice(0, 8)}...{m.address.slice(-6)}</span>
-              </div>
-              <span className="font-mono text-[9px] text-text-muted">{m.since}</span>
+      {/* Roster / Success Log */}
+      <div className="space-y-6">
+        <CyberCard>
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2 bg-jade/10 rounded-lg">
+              <Users size={20} className="text-jade" />
             </div>
-          ))}
-        </div>
-      </CyberCard>
+            <div>
+              <h3 className="font-syne font-bold text-lg text-text-primary">ACTIVE ROSTER</h3>
+              <p className="text-[10px] font-mono text-text-muted">{roster.length} MEMBERS VALIDATED</p>
+            </div>
+          </div>
+
+          <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+            {roster.map((m, i) => (
+              <div key={i} className="flex items-center justify-between p-3 bg-white/5 rounded-lg border border-transparent hover:border-jade/20 transition-all">
+                <span className="text-[12px] font-mono text-text-muted">{m.address.slice(0, 10)}...</span>
+                <CheckCircle2 size={14} className="text-jade" />
+              </div>
+            ))}
+          </div>
+        </CyberCard>
+        
+        <TerminalLog ref={logRef} className="max-h-[160px]" />
+      </div>
     </div>
   )
 }

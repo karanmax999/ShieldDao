@@ -1,20 +1,29 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Shield, Vault, Lock, ArrowUpRight, ArrowDownLeft, RefreshCw } from 'lucide-react'
-import { motion } from 'framer-motion'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Shield, Vault, Lock, ArrowUpRight, ArrowDownLeft, RefreshCw, Activity, Zap, Cpu, History, Globe, Send, AlertTriangle, Eye, Coins } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '../components/UI/button'
 import { CyberCard } from '../components/UI/CyberCard'
 import { DecodingText } from '../components/UI/DecodingText'
 import { TerminalInput } from '../components/UI/TerminalInput'
 import { AdmissionTerminal } from '../components/UI/AdmissionTerminal'
+import { TerminalLog, type TerminalLogHandle } from '../components/UI/TerminalLog'
 import { cn } from '../lib/utils'
-import { Activity, Zap, Cpu, History, Globe, TrendingUp, Info } from 'lucide-react'
 import { useWallet } from '../hooks/useWallet'
 import { useContracts } from '../hooks/useContracts'
 import { useTreasuryBalance } from '../hooks/useTreasuryBalance'
-import { useDAO } from '../context/DAOContext'
+import { parseEther } from 'ethers'
+import { useFhevm } from '../hooks/useFhevm'
+import CryptoSwapCard from '../components/UI/CryptoSwapCard'
+
+// Declare window extension for addLog
+declare global {
+  interface Window {
+    addLog?: (text: string, type?: 'info' | 'success' | 'error' | 'pending') => void;
+  }
+}
 
 const StatusDot = ({ active }: { active?: boolean }) => (
-  <span className="relative flex h-2 w-2 mr-2">
+  <span className="relative flex h-2 w-2">
     <span className={cn(
       "animate-ping absolute inline-flex h-full w-full rounded-full opacity-75",
       active ? "bg-jade" : "bg-red"
@@ -27,69 +36,65 @@ const StatusDot = ({ active }: { active?: boolean }) => (
 )
 
 export default function Treasury() {
-  const { isConnected, address } = useWallet()
-  const { treasuryRead, treasury, dao } = { ...useContracts(), ...useDAO() }
-  const { balance, loading: balanceLoading, refresh: refreshBalance } = useTreasuryBalance()
+  const { isConnected, address, connect, isWrongNetwork, switchToSepolia } = useWallet()
+  const { treasuryRead, treasury } = useContracts()
+  const { balance, loading: balanceLoading, isDecrypted, decrypt, hide, refresh: refreshBalance } = useTreasuryBalance()
+  const { instance, ready: fheReady, error: fheError, status: fheStatus, progress: fheProgress } = useFhevm()
   
   const [isMember, setIsMember] = useState<boolean | null>(null)
-  const [adminAddress, setAdminAddress] = useState<string | null>(null)
   const [amount, setAmount] = useState('')
   const [txLoading, setTxLoading] = useState(false)
-  const [txHash, setTxHash] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'transfer' | 'swap'>('deposit')
+  const [transferRecipient, setTransferRecipient] = useState('')
 
-  // Simulation states
-  const [logs, setLogs] = useState<string[]>([
-    "INITIALIZING_FHEVM_SYNC...",
-    "DETECTING_ZAMA_COPROCESSOR_V2.4...",
-    "ACL_HANDSHAKE_READY"
-  ])
+  const logRef = useRef<TerminalLogHandle>(null)
 
   const checkMembership = useCallback(async () => {
-    if (!treasuryRead || !address) {
-      setIsMember(null)
-      return
-    }
+    if (!treasuryRead || !address) return
     try {
-      const [memberStatus, admin] = await Promise.all([
-        treasuryRead.members(address),
-        treasuryRead.admin()
-      ])
+      const memberStatus = await treasuryRead.members(address)
       setIsMember(memberStatus)
-      setAdminAddress(admin)
     } catch (e) {
-      console.error("Membership check failed", e)
       setIsMember(false)
     }
   }, [treasuryRead, address])
 
   useEffect(() => {
     checkMembership()
+    // Bridge window.addLog to TerminalLog
+    const bridge = (text: string, type?: any) => logRef.current?.addLog(text, type)
+    window.addLog = bridge
     
-    // Simulation: Add random log entries
-    const logInterval = setInterval(() => {
-      const msgs = [
-        "RE-ENCRYPTING_SECRET_HANDLE...",
-        "HOMOMORPHIC_ADDITION_COMPLETE",
-        "ZKP_VERIFICATION_PASSED",
-        "SHROUD_PROTOCOL_STABLE"
-      ]
-      setLogs(prev => [msgs[Math.floor(Math.random() * msgs.length)], ...prev].slice(0, 10))
-    }, 5000)
-    return () => clearInterval(logInterval)
-  }, [checkMembership])
+    // Initial identity log - small delay to ensure log component is ready
+    setTimeout(() => {
+      bridge(`Terminal online. Identity: ${address?.slice(0, 8) || 'Unknown'}`, 'info')
+    }, 500)
+
+    return () => { window.addLog = undefined }
+  }, [checkMembership, address])
+
+  // Watch FHE Status
+  useEffect(() => {
+    if (fheStatus === 'LOADING_WASM') window.addLog?.(`Downloading FHE_CORE_WASM (2.4mb)...`, 'pending')
+    if (fheStatus === 'INITIALIZING_SDK') window.addLog?.(`Booting Relayer SDK Enclave...`, 'pending')
+    if (fheStatus === 'KMS_SYNC') window.addLog?.(`Synchronizing KMS Threshold Keys...`, 'pending')
+    if (fheStatus === 'READY') window.addLog?.(`Privacy Enclave initialized. Zero-Knowledge state ready.`, 'success')
+    if (fheStatus === 'ERROR') window.addLog?.(`CRITICAL_BOOT_FAIL: ${fheError}`, 'error')
+  }, [fheStatus, fheError])
 
   const handleDeposit = async () => {
     if (!treasury || !amount) return
     try {
       setTxLoading(true); setError(null)
-      const tx = await treasury.deposit({ value: BigInt(Math.floor(parseFloat(amount) * 1e18)) })
-      setTxHash(tx.hash)
+      window.addLog?.(`Encrypting ${amount} ETH for vault entry...`, 'pending')
+      const tx = await treasury.deposit({ value: parseEther(amount) })
+      window.addLog?.(`Transaction broadcasted: ${tx.hash.slice(0, 10)}...`, 'info')
       await tx.wait()
-      refreshBalance()
-      setAmount('')
+      window.addLog?.(`Deposit complete. Balance updated homomorphically.`, 'success')
+      refreshBalance(); setAmount('')
     } catch (e: any) {
-      setError(e.message?.slice(0, 80) || 'Transaction failed')
+      setError(e.message?.slice(0, 80)); window.addLog?.(`Deposit aborted.`, 'error')
     } finally { setTxLoading(false) }
   }
 
@@ -97,398 +102,392 @@ export default function Treasury() {
     if (!treasury || !amount) return
     try {
       setTxLoading(true); setError(null)
-      const tx = await treasury.withdraw(BigInt(Math.floor(parseFloat(amount) * 1e18)))
-      setTxHash(tx.hash)
+      window.addLog?.(`Generating privacy proof for withdrawal...`, 'pending')
+      const tx = await treasury.withdraw(parseEther(amount))
       await tx.wait()
-      refreshBalance()
-      setAmount('')
+      window.addLog?.(`Withdrawal finalized. Assets returned to wallet.`, 'success')
+      refreshBalance(); setAmount('')
     } catch (e: any) {
-      setError(e.message?.slice(0, 80) || 'Transaction failed')
+      setError(e.message?.slice(0, 80)); window.addLog?.(`Withdrawal failed.`, 'error')
     } finally { setTxLoading(false) }
   }
 
-  const containerVariants = {
-    hidden: { opacity: 0 },
-    visible: { opacity: 1, transition: { staggerChildren: 0.1 } }
-  }
-
-  const itemVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: { opacity: 1, y: 0 }
+  const handleTransfer = async () => {
+    if (!treasury || !instance || !transferRecipient || !amount) return
+    try {
+      setTxLoading(true); setError(null)
+      window.addLog?.(`Encrypting transfer to ${transferRecipient.slice(0, 8)}...`, 'pending')
+      const encrypted = instance.encrypt64(BigInt(parseEther(amount).toString()))
+      window.addLog?.(`Generating ZK Input Proof...`, 'pending')
+      const tx = await treasury.transfer(transferRecipient, encrypted.ciphertext, encrypted.inputProof)
+      await tx.wait()
+      window.addLog?.(`Shielded transfer finalized on-chain.`, 'success')
+      refreshBalance(); setAmount(''); setTransferRecipient('')
+    } catch (e: any) {
+      setError(e.message?.slice(0, 80)); window.addLog?.(`Transfer aborted.`, 'error')
+    } finally { setTxLoading(false) }
   }
 
   return (
-    <motion.div 
-      initial="hidden"
-      animate="visible"
-      variants={containerVariants}
-      className="py-8"
-    >
-      {/* Header */}
-      <motion.div variants={itemVariants} className="mb-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-amber/10 border border-amber/20">
-            <Vault size={22} className="text-amber" />
-          </div>
-          <div>
-            <h1 className="font-display font-bold text-3xl text-text-primary tracking-tight">SECURE_ENCLAVE</h1>
-            <p className="font-mono text-[10px] text-text-muted uppercase tracking-[0.2em]">
-              Network: <span className="text-amber/60">fhEVM Sepolia</span> Terminal
+    <div className="p-12 space-y-12 max-w-[1240px] mx-auto animate-in fade-in duration-700 pb-20">
+      
+      {/* ─── Header & Health Status ─── */}
+      <section className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div>
+          <h1 className="font-syne font-black text-6xl text-text-primary tracking-tighter uppercase mb-2 italic">REACTOR_CORE</h1>
+          <div className="flex items-center gap-4">
+            <p className="font-mono text-[10px] text-text-muted inline-flex items-center gap-2 uppercase tracking-[0.3em]">
+              <Globe size={12} className="text-jade" /> Zama fhEVM Enclave
+            </p>
+            <div className="h-4 w-[1px] bg-white/10" />
+            <p className="font-mono text-[10px] text-text-muted inline-flex items-center gap-2 uppercase tracking-[0.3em]">
+              <Cpu size={12} className="text-amber" /> Sepolia Relay Active
             </p>
           </div>
         </div>
+
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-4 py-2 border border-white/5 bg-white/5 rounded-full backdrop-blur-xl">
+            <StatusDot active={fheReady} />
+            <span className="font-display font-bold text-[10px] text-text-muted uppercase tracking-widest font-black">Enclave: {fheReady ? 'Online' : 'Booting'}</span>
+          </div>
+          <button onClick={refreshBalance} disabled={balanceLoading} className="p-3 bg-white/5 border border-white/10 rounded-full hover:bg-white/10 transition-colors shadow-[0_0_20px_rgba(255,255,255,0.05)]">
+            <RefreshCw size={16} className={cn("text-text-muted", balanceLoading && "animate-spin")} />
+          </button>
+        </div>
+      </section>
+
+      {isWrongNetwork && (
+        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="bg-red/10 border border-red-500/20 p-5 rounded-2xl flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <AlertTriangle size={18} className="text-red-500" />
+            <span className="font-mono text-xs text-red-400">Terminal misconfiguration: Connect to Sepolia testnet to proceed.</span>
+          </div>
+          <Button onClick={switchToSepolia} variant="ghost" className="text-red-500 font-bold text-[11px] hover:bg-red-500/20">SWITCH NETWORK</Button>
+        </motion.div>
+      )}
+
+      {/* ─── Reactor & Metrics Grid ─── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         
-        {txHash && (
-          <motion.a 
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            href={`https://sepolia.etherscan.io/tx/${txHash}`}
-            target="_blank"
-            className="px-4 py-2 rounded-xl bg-jade/5 border border-jade/20 text-jade font-mono text-[10px] hover:bg-jade/10 transition-colors flex items-center gap-2"
-          >
-            LAST TX: {txHash.slice(0, 10)}... ↗
-          </motion.a>
-        )}
-      </motion.div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Balance card */}
-        <div className="lg:col-span-1 space-y-4">
-          <CyberCard variant="amber" className="relative overflow-hidden">
-            {/* Background Aesthetic */}
-            <div className="absolute inset-0 opacity-[0.03] pointer-events-none">
-               <img src="/primitive.png" alt="" className="w-full h-full object-cover grayscale brightness-200" />
-            </div>
+        {/* Reactor Visual (Left) */}
+        <div className="lg:col-span-8">
+          <CyberCard className="relative h-[340px] overflow-hidden group border-amber/20 bg-black/40 shadow-[0_0_100px_rgba(245,166,35,0.08)]">
+             <div className="absolute inset-0 z-0 opacity-50">
+                <div className="absolute inset-0 overflow-hidden">
+                   {/* Reactor Core Visual */}
+                   <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px]">
+                      <div className="absolute inset-0 border-[2px] border-amber/10 rounded-full animate-[spin_20s_linear_infinite]" />
+                      <div className="absolute inset-10 border-[1px] border-amber/5 rounded-full animate-[spin_15s_linear_infinite_reverse]" />
+                      <div className="absolute inset-20 border-[4px] border-amber/5 rounded-full border-dashed animate-[spin_30s_linear_infinite]" />
+                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-40 h-40 bg-amber/5 rounded-full blur-[80px] animate-pulse" />
+                   </div>
+                </div>
+                <img src="/cyber_vault_shroud_1774891307204.png" alt="" className="w-full h-full object-cover grayscale opacity-40 group-hover:grayscale-0 group-hover:opacity-60 transition-all duration-[10s]" />
+                <div className="absolute inset-0 bg-gradient-to-t from-bg-primary via-transparent to-bg-primary/60" />
+             </div>
             
-            <div className="relative z-10">
-              <div className="flex items-center justify-between mb-8">
-                <span className="font-mono text-[10px] text-text-muted tracking-widest uppercase">Secret Balance</span>
-                <div className="flex items-center gap-2">
-                  {balanceLoading && <RefreshCw size={12} className="text-amber animate-spin" />}
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber/10 border border-amber/20">
-                    <Lock size={10} className="text-amber" />
-                    <span className="font-mono text-[10px] text-amber">FHE SECURED</span>
-                  </div>
-                </div>
+            <div className="relative z-10 h-full p-10 flex flex-col justify-between">
+              <div className="space-y-1">
+                 <h2 className="font-display font-black text-4xl text-white tracking-tighter italic uppercase opacity-90">COPROCESSOR_LINK</h2>
+                 <div className="flex items-center gap-3">
+                    <div className="w-16 h-px bg-amber shadow-[0_0_15px_#F5A623]" />
+                    <span className="font-mono text-[9px] text-amber uppercase tracking-[0.5em] font-bold">ZAMA_FHEV2.4_READY</span>
+                 </div>
               </div>
 
-              <div className="space-y-6 mb-8">
-                <div className="relative">
-                  <div className="absolute -inset-4 bg-amber/5 blur-3xl rounded-full opacity-50 animate-pulse" />
-                  <div className="relative font-mono text-4xl font-bold tracking-tighter text-text-primary min-h-[40px] flex items-center">
-                    {isConnected ? (
-                      balance !== null ? (
-                        <DecodingText key={balance} text={`${balance} ETH`} duration={1500} />
-                      ) : (
-                        <div className="flex gap-1 overflow-hidden opacity-40">
-                           {Array.from({ length: 6 }).map((_, i) => (
-                            <div key={i} className="w-5 h-8 rounded-sm bg-amber/20 animate-pulse" style={{ animationDelay: `${i * 0.1}s` }} />
-                          ))}
-                        </div>
-                      )
-                    ) : (
-                      <div className="text-text-muted text-lg uppercase tracking-widest opacity-30 italic">No Terminal Handle</div>
-                    )}
-                  </div>
-                </div>
-                
-                <div className="flex flex-col gap-1">
-                  <p className="font-mono text-[10px] text-text-muted uppercase tracking-widest">
-                    {isConnected ? "Secure Logic Key: " : "Connect your terminal to decrypt balance"}
-                  </p>
-                  {isConnected && (
-                     <span className="font-mono text-[9px] text-amber/40 uppercase truncate">
-                      {address}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="pt-6 border-t border-white/5 flex justify-between items-center">
-                <div className="flex items-start gap-2 text-text-muted">
-                  <Shield size={14} className="text-amber/60 mt-0.5" />
-                  <p className="font-mono text-[10px] leading-relaxed max-w-[160px] uppercase">
-                    Selective re-encryption protocol v2.4 active.
-                  </p>
-                </div>
-                <Button onClick={refreshBalance} variant="ghost" className="p-0 h-auto hover:bg-transparent">
-                   <RefreshCw size={14} className={cn("text-text-muted hover:text-amber transition-colors", balanceLoading && "animate-spin")} />
-                </Button>
+              <div className="w-full max-w-md space-y-5 bg-black/40 p-6 rounded-2xl border border-white/5 backdrop-blur-md">
+                 <div className="flex justify-between items-center px-1">
+                    <p className="font-mono text-[9px] text-text-muted uppercase tracking-widest font-black">ENCLAVE INTEGRITY</p>
+                    <div className="flex items-center gap-2">
+                      <Activity size={12} className="text-jade animate-pulse" />
+                      <span className="font-mono text-[10px] text-jade font-black">SECURE (100%)</span>
+                    </div>
+                 </div>
+                 <div className="flex gap-1.5 h-2 px-0.5">
+                    {Array.from({ length: 32 }).map((_, i) => (
+                      <div key={i} className={cn("flex-1 rounded-full transition-all duration-1000 shadow-[0_0_5px_rgba(245,166,35,0.2)]", i < 28 ? "bg-amber" : "bg-white/10")} style={{ transitionDelay: `${i * 20}ms` }} />
+                    ))}
+                 </div>
               </div>
             </div>
           </CyberCard>
+        </div>
 
-          {/* Advanced FHE Status */}
-          <CyberCard className="p-5 border-jade/20 bg-jade/5">
-            <div className="flex items-center gap-3 mb-6">
-              <Zap size={14} className="text-jade" />
-              <h3 className="font-mono text-[10px] text-jade uppercase tracking-[0.2em] font-bold">Coprocessor Health</h3>
+        <div className="lg:col-span-4 flex flex-col gap-6">
+          <CyberCard variant="jade" className="flex-1 hover:border-jade/40 transition-colors">
+            <div className="flex items-center gap-3 mb-8">
+              <Zap size={16} className="text-jade" />
+              <h3 className="font-mono text-[11px] text-jade uppercase tracking-[0.3em] font-black">Coprocessor Health</h3>
             </div>
-            <div className="space-y-4">
+            <div className="space-y-5">
                {[
                  { label: "Gate Capacity", value: "98.4%", icon: Cpu },
                  { label: "Noise Budget", value: "RESTORED", icon: Shield },
                  { label: "Proof Latency", value: "< 240ms", icon: Activity }
                ].map(item => (
-                 <div key={item.label} className="flex justify-between items-center bg-black/20 p-2.5 rounded-lg border border-white/5">
-                   <div className="flex items-center gap-2">
-                     <item.icon size={11} className="text-text-muted" />
-                     <span className="font-mono text-[9px] text-text-secondary uppercase">{item.label}</span>
+                 <div key={item.label} className="flex justify-between items-center bg-black/40 p-4 rounded-xl border border-white/5 hover:bg-jade/5 transition-all">
+                   <div className="flex items-center gap-3">
+                     <item.icon size={14} className="text-text-muted opacity-60" />
+                     <span className="font-mono text-[10px] text-text-secondary uppercase tracking-widest font-bold">{item.label}</span>
                    </div>
-                   <span className="font-mono text-[10px] text-jade font-bold">{item.value}</span>
+                   <span className="font-mono text-sm text-jade font-black italic">{item.value}</span>
                  </div>
                ))}
             </div>
           </CyberCard>
+        </div>
+      </div>
 
-          {/* Operation History / Logs */}
-          <CyberCard className="p-5 border-white/5 bg-black/40">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <History size={14} className="text-text-muted" />
-                <h3 className="font-mono text-[10px] text-text-muted uppercase tracking-widest font-bold">Operations Log</h3>
+      {/* ─── Row 2: Asset Enclave & Operations Console ─── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+        
+        {/* Left: Private Enclave */}
+        <div className="lg:col-span-5">
+          <CyberCard variant="amber" className="h-full relative overflow-hidden group min-h-[480px] flex flex-col justify-between shadow-[0_0_60px_rgba(245,166,35,0.04)]">
+            <div className="absolute top-0 right-0 p-16 text-amber/5 pointer-events-none group-hover:scale-110 transition-transform duration-[12s] rotate-12"><Vault size={300} /></div>
+            
+            <div className="relative z-10 p-6">
+              <div className="flex items-center justify-between mb-16">
+                <div className="px-4 py-1.5 bg-amber/10 border border-amber/20 rounded-full flex items-center gap-3 backdrop-blur-xl">
+                  <Lock size={14} className="text-amber" />
+                  <span className="font-mono text-[10px] text-amber uppercase font-black tracking-[0.25em]">PRIVACY ENCLAVE ACTIVE</span>
+                </div>
               </div>
-              <div className="w-1.5 h-1.5 rounded-full bg-jade animate-pulse" />
-            </div>
-            <div className="h-[120px] font-mono text-[8.5px] overflow-hidden flex flex-col-reverse gap-1.5 opacity-60">
-               {logs.map((log, i) => (
-                 <div key={i} className="flex gap-2">
-                    <span className="text-amber/40">[{new Date().getSeconds()}s]</span>
-                    <span className="text-text-muted">{log}</span>
-                 </div>
-               ))}
-            </div>
-          </CyberCard>
 
-          {/* Advanced Analytics */}
-          <CyberCard className="p-6 relative group overflow-hidden">
-             <div className="absolute top-0 right-0 p-10 opacity-[0.02] rotate-12 group-hover:rotate-0 transition-transform duration-1000">
-                <Globe size={180} />
-             </div>
-             <div className="relative z-10">
-                <div className="flex items-center gap-3 mb-8">
-                  <TrendingUp size={16} className="text-text-primary" />
-                  <h3 className="font-mono text-[11px] text-text-primary uppercase tracking-[0.3em] font-bold">Node Distribution</h3>
-                </div>
+              <div className="space-y-16">
                 <div className="space-y-6">
-                   <div className="flex items-center gap-4">
-                      <div className="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
-                        <div className="h-full bg-amber w-[65%]" />
-                      </div>
-                      <span className="font-mono text-[10px] text-text-muted">EU_WEST (65%)</span>
-                   </div>
-                   <div className="flex items-center gap-4">
-                      <div className="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
-                        <div className="h-full bg-jade w-[35%]" />
-                      </div>
-                      <span className="font-mono text-[10px] text-text-muted">US_EAST (35%)</span>
-                   </div>
-                   <p className="font-mono text-[9px] text-text-muted leading-relaxed uppercase pt-2">
-                     <Info size={10} className="inline mr-1 mb-0.5" />
-                     Multi-shard FHE processing enabled across 12 decentralized validator nodes.
-                   </p>
+                  <span className="font-mono text-[11px] text-text-muted uppercase tracking-[0.3em] opacity-40 font-bold block ml-1">SHIELDED BALANCE</span>
+                  <div className="font-syne font-black text-8xl text-text-primary tracking-tighter flex items-baseline gap-4 min-h-[80px] drop-shadow-[0_0_30px_rgba(255,255,255,0.05)]">
+                    {isConnected ? (
+                      isDecrypted ? (
+                        balance !== null ? (
+                          <DecodingText key={balance} text={balance} duration={1500} />
+                        ) : (
+                          <div className="flex gap-3">
+                             {[...Array(6)].map((_, i) => <div key={i} className="w-10 h-16 bg-amber/10 animate-pulse rounded-xl" style={{ animationDelay: `${i * 0.1}s` }} />)}
+                          </div>
+                        )
+                      ) : (
+                        <div className="flex gap-3">
+                           {[...Array(5)].map((_, i) => (
+                             <div key={i} className="w-12 h-16 bg-white/5 border border-white/5 rounded-xl flex items-center justify-center font-mono text-2xl text-white/5 select-none">
+                               ?
+                             </div>
+                           ))}
+                        </div>
+                      )
+                    ) : (
+                      <span className="text-3xl text-text-muted italic opacity-20 tracking-normal uppercase font-mono">Terminal Offline</span>
+                    )}
+                    {isDecrypted && balance !== null && <span className="text-3xl text-amber/40 font-mono italic">ETH</span>}
+                  </div>
                 </div>
-             </div>
-          </CyberCard>
 
-          {/* New Advanced Functions Row */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-black/20 p-1 rounded-2xl border border-white/5">
-             <div className="p-6 rounded-xl border border-white/5 hover:border-amber/20 transition-all cursor-not-allowed group">
-                <div className="flex justify-between items-center mb-4">
-                   <h4 className="font-display font-bold text-sm text-text-muted group-hover:text-amber/60">CONFIDENTIAL TRANSFER</h4>
-                   <Lock size={14} className="text-text-muted group-hover:text-amber/40" />
+                <div className="pt-4">
+                   {isConnected && (
+                     isDecrypted ? (
+                        <Button 
+                          variant="ghost" 
+                          onClick={hide} 
+                          className="h-10 px-6 border border-white/10 text-text-muted hover:text-white rounded-full font-mono text-[10px] tracking-widest uppercase font-black"
+                        >
+                          <Lock size={12} className="mr-2" /> HIDE_ASSETS
+                        </Button>
+                     ) : (
+                        <div className="flex flex-col gap-4">
+                          <Button 
+                            variant="outline" 
+                            onClick={() => {
+                              if (!fheReady) {
+                                window.addLog?.("Error: Privacy Enclave is still booting. Please wait.", "error")
+                                return
+                              }
+                              decrypt()
+                            }} 
+                            disabled={balanceLoading}
+                            className="h-14 px-10 border-amber text-amber hover:bg-amber/20 rounded-xl font-mono text-xs tracking-widest uppercase font-black shadow-[0_0_30px_rgba(245,166,35,0.2)] transition-all group/btn"
+                          >
+                            {balanceLoading ? (
+                              <RefreshCw size={16} className="mr-3 animate-spin" />
+                            ) : (
+                              <Eye size={16} className="mr-3 group-hover/btn:scale-125 transition-transform" />
+                            )}
+                            REVEAL_ASSETS_ENCLAVE
+                          </Button>
+                          {!fheReady && !fheError && (
+                            <div className="space-y-3">
+                               <div className="flex justify-between items-center px-1">
+                                  <p className="font-mono text-[9px] text-amber/60 uppercase tracking-widest animate-pulse">{fheStatus.replace('_', ' ')}...</p>
+                                  <p className="font-mono text-[10px] text-amber font-black">{fheProgress}%</p>
+                               </div>
+                               <div className="h-1 bg-white/5 rounded-full overflow-hidden border border-white/5">
+                                  <motion.div 
+                                    initial={{ width: 0 }}
+                                    animate={{ width: `${fheProgress}%` }}
+                                    className="h-full bg-amber shadow-[0_0_10px_rgba(245,166,35,0.5)]"
+                                  />
+                               </div>
+                            </div>
+                          )}
+                          {fheError && (
+                            <div className="flex flex-col gap-2">
+                               <p className="font-mono text-[9px] text-red uppercase tracking-widest px-2 py-1 bg-red/10 border border-red/20 rounded">CRITICAL_BOOT_ERROR: {fheError.slice(0, 40)}...</p>
+                               <Button variant="ghost" size="sm" onClick={() => window.location.reload()} className="h-8 text-[9px] text-amber">REBOOT_TERMINAL</Button>
+                            </div>
+                          )}
+                        </div>
+                     )
+                   )}
                 </div>
-                <p className="font-mono text-[9px] text-text-muted uppercase leading-relaxed">Cross-member private relayer. Awaiting governance approval.</p>
+
+                <div className="grid grid-cols-2 gap-10 border-t border-white/10 pt-12 pr-6">
+                   <div className="space-y-3">
+                      <p className="font-mono text-[10px] text-text-muted uppercase tracking-widest opacity-30 font-bold">Identity Status</p>
+                      <div className="flex items-center gap-3 bg-black/20 p-2.5 rounded-lg border border-white/5">
+                        <div className={cn("w-2 h-2 rounded-full", isMember ? "bg-jade animate-pulse" : "bg-red")} />
+                        <p className="font-mono text-[10px] font-black text-text-primary uppercase tracking-widest">{isMember ? "Validated Agent" : "Unverified Guest"}</p>
+                      </div>
+                   </div>
+                   <div className="space-y-3">
+                      <p className="font-mono text-[10px] text-text-muted uppercase tracking-widest opacity-30 font-bold">Node Security</p>
+                      <div className="flex items-center gap-3 bg-black/20 p-2.5 rounded-lg border border-white/5">
+                         <Shield size={12} className="text-amber" />
+                         <p className="font-mono text-[10px] font-black text-amber uppercase tracking-widest italic">Enc_V2.4 Active</p>
+                      </div>
+                   </div>
+                </div>
+              </div>
+            </div>
+
+            {!isConnected && (
+              <Button onClick={connect} className="w-full py-10 mt-10 rounded-3xl bg-amber text-bg-primary font-black text-sm tracking-[0.3em] hover:scale-[1.02] transition-all shadow-[0_0_40px_rgba(245,166,35,0.2)]">
+                BOOT TERMINAL INTERFACE
+              </Button>
+            )}
+          </CyberCard>
+        </div>
+
+        {/* Right: Operations Console */}
+        <div className="lg:col-span-7 space-y-8">
+          {(!isConnected || isMember === false) ? (
+            <AdmissionTerminal address={address} onEnlist={() => checkMembership()} />
+          ) : (
+            <CyberCard className="p-0 overflow-hidden bg-black/40 border-white/10 shadow-[0_32px_100px_rgba(0,0,0,0.4)]">
+              <div className="grid grid-cols-4 border-b border-white/10">
+                 {[
+                   { id: 'deposit', label: 'Inbound', icon: ArrowDownLeft, color: 'text-jade' },
+                   { id: 'withdraw', label: 'Outbound', icon: ArrowUpRight, color: 'text-red' },
+                   { id: 'transfer', label: 'Shielded', icon: Send, color: 'text-amber' },
+                   { id: 'swap', label: 'Swap', icon: Coins, color: 'text-white' }
+                 ].map(tab => (
+                   <button 
+                     key={tab.id}
+                     onClick={() => setActiveTab(tab.id as any)}
+                     className={cn(
+                       "py-8 flex flex-col items-center gap-3 transition-all relative group",
+                       activeTab === tab.id ? "bg-white/5" : "hover:bg-white/[0.03] opacity-30 hover:opacity-100"
+                     )}
+                   >
+                      <tab.icon size={22} className={cn(tab.color, "transition-transform group-hover:scale-125 duration-500", activeTab === tab.id && "drop-shadow-[0_0_8px_currentColor]")} />
+                      <span className="font-mono text-[10px] font-black uppercase tracking-[0.4em]">{tab.label}</span>
+                      {activeTab === tab.id && <motion.div layoutId="activeTab" className="absolute bottom-0 left-6 right-6 h-1 bg-text-primary rounded-full" />}
+                   </button>
+                 ))}
+              </div>
+
+              <div className="p-12 space-y-10 min-h-[380px]">
+                 <AnimatePresence mode="wait">
+                    <motion.div
+                      key={activeTab}
+                      initial={{ opacity: 0, scale: 0.98, y: 15 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.98, y: -15 }}
+                      transition={{ duration: 0.3, ease: 'easeOut' }}
+                      className="space-y-10"
+                    >
+                      {activeTab === 'swap' ? (
+                         <CryptoSwapCard />
+                       ) : (
+                         <>
+                           {activeTab === 'transfer' && (
+                             <TerminalInput 
+                               variant="amber"
+                               label="Recipient Agent Core Hash"
+                               placeholder="0x..."
+                               value={transferRecipient}
+                               onChange={e => setTransferRecipient(e.target.value)}
+                             />
+                           )}
+                           
+                           <div className="relative group">
+                             <TerminalInput 
+                               variant={activeTab === 'deposit' ? 'jade' : activeTab === 'withdraw' ? 'red' : 'amber'}
+                               label={`${activeTab.toUpperCase()} QUANTUM (ETH)`}
+                               placeholder="0.00"
+                               type="number"
+                               value={amount}
+                               onChange={e => setAmount(e.target.value)}
+                             />
+                           </div>
+
+                           <div className="pt-6">
+                             <Button 
+                               onClick={activeTab === 'deposit' ? handleDeposit : activeTab === 'withdraw' ? handleWithdraw : handleTransfer}
+                               disabled={txLoading || !amount || (activeTab === 'transfer' && !transferRecipient)}
+                               className={cn(
+                                 "w-full py-10 rounded-3xl font-black text-base tracking-[0.4em] shadow-2xl hover:scale-[1.02] transition-all duration-300 active:scale-95 group",
+                                 activeTab === 'deposit' ? "bg-jade text-bg-primary shadow-jade/20" : activeTab === 'withdraw' ? "bg-red text-bg-primary shadow-red/20" : "bg-amber text-bg-primary shadow-amber/20"
+                               )}
+                             >
+                               <div className="flex items-center gap-4">
+                                 {txLoading ? <RefreshCw className="animate-spin" size={20} /> : <div className="p-2 border border-black/20 rounded-full group-hover:rotate-12 transition-transform"><Cpu size={16} /></div>}
+                                 {txLoading ? "AUTHORIZING_ENCLAVE..." : `CONFIRM ${activeTab.toUpperCase()}_LINK`}
+                               </div>
+                             </Button>
+                             {error && <p className="mt-6 font-mono text-[11px] text-red-500 font-bold uppercase text-center animate-pulse tracking-widest bg-red-500/5 p-3 rounded-lg border border-red-500/10">{error}</p>}
+                           </div>
+                         </>
+                       )}
+                    </motion.div>
+                 </AnimatePresence>
+              </div>
+            </CyberCard>
+          )}
+
+          <div className="grid grid-cols-2 gap-8">
+             <div className="p-8 bg-white/[0.02] border border-white/5 rounded-3xl space-y-4 hover:border-white/10 transition-colors">
+                <div className="flex items-center gap-3 text-text-muted uppercase font-mono text-[9px] font-bold tracking-[0.3em] opacity-60"><History size={14} className="text-jade" /> Last Operations</div>
+                <div className="space-y-3">
+                  <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden"><div className="h-full bg-jade/20 w-3/4" /></div>
+                  <div className="h-1.5 w-4/5 bg-white/5 rounded-full overflow-hidden"><div className="h-full bg-jade/20 w-1/2" /></div>
+                </div>
              </div>
-             <div className="p-6 rounded-xl border border-white/5 hover:border-jade/20 transition-all cursor-not-allowed group">
-                <div className="flex justify-between items-center mb-4">
-                   <h4 className="font-display font-bold text-sm text-text-muted group-hover:text-jade/60">FHE STAKING</h4>
-                   <TrendingUp size={14} className="text-text-muted group-hover:text-jade/40" />
-                </div>
-                <p className="font-mono text-[9px] text-text-muted uppercase leading-relaxed">Secret yield generation v1. Beta testing in progress.</p>
+             <div className="p-8 bg-amber/5 border border-amber/10 rounded-3xl group cursor-help transition-all hover:bg-amber/[0.08]">
+                <div className="flex items-center gap-3 text-amber uppercase font-mono text-[9px] font-bold tracking-[0.3em]"><Lock size={14} className="animate-pulse" /> Privacy Enclave</div>
+                <p className="font-mono text-[10px] text-text-muted mt-3 leading-relaxed opacity-60 uppercase font-black tracking-tighter">Homomorphic subtraction ensures transaction parity without data leakage.</p>
              </div>
           </div>
         </div>
-
-        {/* Deposit & Withdraw */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Reactor Visual - CRAZY ADDITION */}
-          <CyberCard className="relative h-[280px] overflow-hidden group border-amber/20 shadow-[0_0_60px_rgba(245,166,35,0.08)] bg-black/40">
-             <div className="absolute inset-0 z-0">
-                <img 
-                  src="/cyber_vault_shroud_1774891307204.png" 
-                  alt="Zama Reactor" 
-                  className="w-full h-full object-cover opacity-60 group-hover:scale-110 transition-transform duration-[20000ms] ease-linear"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-bg-primary via-transparent to-bg-primary/40" />
-             </div>
-
-             {/* Encryption Stream Overlay */}
-             <div className="absolute inset-x-0 top-0 h-full pointer-events-none opacity-[0.05] font-mono text-[8px] text-amber flex gap-8 p-4 overflow-hidden select-none">
-                {Array.from({ length: 3 }).map((_, col) => (
-                  <div key={col} className="flex flex-col gap-1 animate-[terminal-scan_15s_linear_infinite]" style={{ animationDelay: `${col * -4.5}s` }}>
-                    {Array.from({ length: 40 }).map((_, i) => (
-                       <span key={i}>{Math.random().toString(16).slice(2, 12).toUpperCase()}</span>
-                    ))}
-                  </div>
-                ))}
-             </div>
-
-             <div className="relative z-10 h-full flex flex-col justify-between p-8">
-                <div className="flex justify-between items-start">
-                   <div className="space-y-1">
-                      <h3 className="font-display font-black text-4xl text-white tracking-tighter italic">REACTOR_CORE</h3>
-                      <div className="flex items-center gap-3">
-                         <div className="w-16 h-0.5 bg-amber animate-pulse shadow-[0_0_10px_#F5A623]" />
-                         <span className="font-mono text-[9px] text-amber uppercase tracking-[0.5em] font-bold">ZAMA_FHE_COPROCESSOR</span>
-                      </div>
-                   </div>
-                   <div className="p-4 rounded-full bg-black/60 border border-amber/40 backdrop-blur-3xl animate-[spin_15s_linear_infinite]">
-                      <Cpu size={32} className="text-amber shadow-[0_0_25px_rgba(245,166,35,0.8)]" />
-                   </div>
-                </div>
-
-                <div className="flex items-end justify-between gap-8">
-                   <div className="flex-1 space-y-4">
-                      <div className="flex justify-between items-center mb-1 px-1">
-                         <p className="font-mono text-[9px] text-text-muted uppercase tracking-[0.2em]">Enclave Integrity</p>
-                         <div className="flex items-center gap-2">
-                            <Activity size={10} className="text-jade animate-pulse" />
-                            <span className="font-mono text-[9px] text-jade font-bold">VERIFIED</span>
-                         </div>
-                      </div>
-                      <div className="flex gap-1 h-1.5 px-0.5">
-                         {Array.from({ length: 32 }).map((_, i) => (
-                           <div key={i} className={cn("flex-1 rounded-full transition-all duration-1000", i < 24 ? "bg-amber" : "bg-white/10")} style={{ transitionDelay: `${i * 20}ms` }} />
-                         ))}
-                      </div>
-                   </div>
-                   <div className="text-right min-w-[100px] border-l border-white/10 pl-6">
-                      <p className="font-mono text-[28px] font-bold text-white leading-none tracking-tighter">98.2%</p>
-                      <p className="font-mono text-[8px] text-amber uppercase tracking-widest mt-2 font-bold">Enc_Efficiency</p>
-                   </div>
-                </div>
-             </div>
-          </CyberCard>
-          {isMember === false && isConnected ? (
-            <div className="space-y-4">
-              <AdmissionTerminal address={address} onEnlist={() => console.log("Enlistment requested for:", address)} />
-              {address?.toLowerCase() === adminAddress?.toLowerCase() && (
-                <Button 
-                  onClick={async () => {
-                    if (!treasury) return
-                    try {
-                      setTxLoading(true)
-                      const tx = await treasury.addMember(address)
-                      await tx.wait()
-                      checkMembership()
-                    } catch (e) {
-                      console.error("Self-admission failed", e)
-                    } finally { setTxLoading(false) }
-                  }}
-                  className="w-full bg-amber/20 border border-amber/40 text-amber font-mono text-[10px] py-4 rounded-xl hover:bg-amber/30 transition-all uppercase tracking-widest"
-                >
-                  {txLoading ? "AUTHORIZING..." : "ADMIN OVERRIDE: GRANT SELF ACCESS"}
-                </Button>
-              )}
-            </div>
-          ) : isMember === null && isConnected ? (
-             <CyberCard className="flex items-center justify-center py-20">
-               <div className="flex flex-col items-center gap-4">
-                  <RefreshCw size={24} className="text-amber animate-spin opacity-40" />
-                  <p className="font-mono text-[10px] text-text-muted uppercase tracking-[0.3em]">Identity Scan In Progress...</p>
-               </div>
-             </CyberCard>
-          ) : (
-            <>
-              <CyberCard variant="jade" className="relative group">
-                <div className="flex justify-between items-start mb-6">
-                  <div>
-                    <h2 className="font-display font-bold text-lg text-text-primary mb-1 flex items-center gap-2">
-                      <ArrowDownLeft size={18} className="text-jade" />
-                      Privatize Assets
-                    </h2>
-                    <p className="font-mono text-[10px] text-text-muted uppercase tracking-wider">
-                      Native ETH → <span className="text-jade">Encrypted euint64</span>
-                    </p>
-                  </div>
-                  <div className="p-2 rounded-full bg-jade/5 border border-jade/20 opacity-50 group-hover:opacity-100 transition-opacity">
-                    <Shield size={16} className="text-jade" />
-                  </div>
-                </div>
-
-                <div className="space-y-6">
-                  <TerminalInput 
-                    variant="jade"
-                    label="Entry Amount (ETH)"
-                    placeholder="0.00"
-                    type="number"
-                    value={amount}
-                    onChange={e => setAmount(e.target.value)}
-                  />
-                  
-                  <div className="flex flex-col sm:flex-row items-center gap-4">
-                    <Button 
-                      onClick={handleDeposit}
-                      disabled={txLoading || !amount}
-                      className="w-full sm:w-auto rounded-xl px-10 py-6 bg-jade hover:bg-jade-dim text-bg-primary font-bold transition-all shadow-[0_0_15px_rgba(46,204,113,0.3)]"
-                    >
-                      {txLoading ? "EXECUTING..." : "INITIALIZE DEPOSIT"}
-                    </Button>
-                    {error && <span className="text-[10px] font-mono text-red animate-pulse uppercase tracking-tighter">{error}</span>}
-                  </div>
-                </div>
-              </CyberCard>
-
-              <CyberCard variant="red" className="group">
-                <div className="flex justify-between items-start mb-6">
-                  <div>
-                    <h2 className="font-display font-bold text-lg text-text-primary mb-1 flex items-center gap-2">
-                      <ArrowUpRight size={18} className="text-red" />
-                      FHE Extraction
-                    </h2>
-                    <p className="font-mono text-[10px] text-text-muted uppercase tracking-wider">
-                      Homomorphic Underflow Protection
-                    </p>
-                  </div>
-                  <div className="p-2 rounded-full bg-red/5 border border-red/20 opacity-50 group-hover:opacity-100 transition-opacity">
-                    <Lock size={16} className="text-red" />
-                  </div>
-                </div>
-
-                <div className="space-y-6">
-                  <TerminalInput 
-                    variant="red"
-                    label="Extraction Amount (ETH)"
-                    placeholder="0.00"
-                    type="number"
-                    value={amount}
-                    onChange={e => setAmount(e.target.value)}
-                  />
-
-                  <div className="flex flex-col sm:flex-row items-center gap-4">
-                    <Button 
-                      onClick={handleWithdraw}
-                      disabled={txLoading || !amount}
-                      variant="outline" 
-                      className="w-full sm:w-auto rounded-xl px-10 py-6 border-red text-red hover:bg-red/10 font-bold transition-all"
-                    >
-                      {txLoading ? "AUTHORIZING..." : "AUTHORIZE WITHDRAWAL"}
-                    </Button>
-                    <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red/5 border border-red/10">
-                       <DecodingText 
-                        className="text-[10px] text-red/70 uppercase tracking-widest"
-                        text="FHE.select() Verification Active"
-                        interval={100}
-                       />
-                    </div>
-                  </div>
-                </div>
-              </CyberCard>
-            </>
-          )}
-        </div>
       </div>
-    </motion.div>
+
+      {/* ─── Row 3: Operation Logs ─── */}
+      <section className="space-y-6 pt-8">
+        <div className="flex items-center justify-between border-b border-white/10 pb-4">
+           <div className="flex items-center gap-4">
+              <div className="p-2 bg-jade/10 rounded-lg"><Activity size={18} className="text-jade" /></div>
+              <h3 className="font-display font-black text-xl text-text-primary uppercase tracking-tighter">System Log Output</h3>
+           </div>
+           <div className="flex items-center gap-4">
+             <div className="flex items-center gap-2 px-3 py-1 bg-jade/5 rounded-full border border-jade/20 text-[9px] font-mono text-jade font-black tracking-widest animate-pulse">
+               STABLE_LINK_V2
+             </div>
+             <div className="w-2 h-2 rounded-full bg-jade" />
+           </div>
+        </div>
+        <TerminalLog ref={logRef} className="h-[280px] border-white/10 bg-black/60 shadow-[0_32px_120px_rgba(0,0,0,0.6)] rounded-3xl" />
+      </section>
+
+    </div>
   )
 }

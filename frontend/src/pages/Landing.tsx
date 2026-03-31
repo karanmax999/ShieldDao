@@ -1,11 +1,11 @@
 import { ChevronRight, ExternalLink, Vote, Shield, Zap, Eye, Vault } from 'lucide-react'
-import { motion, useScroll, AnimatePresence, useMotionValueEvent } from 'framer-motion'
-import { useRef, useState } from 'react'
+import { useScroll, AnimatePresence, useMotionValueEvent } from 'framer-motion'
 import { InfiniteSlider } from '../components/UI/infinite-slider'
 import { ProgressiveBlur } from '../components/UI/progressive-blur'
 import { Button } from '../components/UI/button'
 import { BentoGrid, type BentoItem } from '../components/UI/bento-grid'
 import { FullScreenScrollFX, type Section as FXSection } from '../components/UI/full-screen-scroll-fx'
+import FeatureShaderCards from '../components/UI/FeatureShaderCards'
 
 interface LandingProps {
   onNavigate: (path: string) => void
@@ -51,7 +51,7 @@ const bentoItems: BentoItem[] = [
   },
   {
     title: 'fhEVM Infrastructure',
-    meta: 'ZAMA POWERED',
+    meta: 'Zama POWERED',
     description: 'High-performance FHE arithmetic on-chain for complex confidential logic and state management.',
     icon: <Zap className="w-5 h-5 text-sky-500" />,
     tags: ['Protocol', 'Nodes'],
@@ -86,54 +86,7 @@ const visionSections: FXSection[] = [
   },
 ]
 
-const workflowSteps = [
-  {
-    number: '01',
-    title: 'Local Encryption',
-    description: 'Your data is encrypted locally using the fhEVM public keys. No unencrypted data ever leaves your device, ensuring total privacy from the start.',
-    image: '/workflow_1.png',
-  },
-  {
-    number: '02',
-    title: 'Blind Computation',
-    description: 'ShieldDAO contracts perform operations directly on ciphertexts. Validators compute results without ever seeing the underlying values.',
-    image: '/workflow_2.png',
-  },
-  {
-    number: '03',
-    title: 'On-Chain Commitment',
-    description: 'Encrypted results are finalized on the Zama fhEVM, creating a tamper-proof and private record of the DAO state.',
-    image: '/workflow_3.png',
-  },
-  {
-    number: '04',
-    title: 'Authorized Disclosure',
-    description: 'Selective decryption allows for compliance and auditing. Authorized parties can reveal specific data without exposing private keys.',
-    image: '/workflow_5.png',
-  },
-]
-
 export default function Landing({ onNavigate }: LandingProps) {
-  const workflowContainerRef = useRef<HTMLDivElement>(null)
-  const { scrollYProgress } = useScroll({
-    target: workflowContainerRef,
-    offset: ["start start", "end end"]
-  })
-
-  // Track active index based on scroll progress
-  const [activeWorkflowIndex, setActiveWorkflowIndex] = useState(0)
-  
-  useMotionValueEvent(scrollYProgress, "change", (v) => {
-    // Smoother transition: map 0-1 to step indices
-    const nextIndex = Math.min(
-      Math.floor(v * workflowSteps.length),
-      workflowSteps.length - 1
-    )
-    if (nextIndex !== activeWorkflowIndex) {
-      setActiveWorkflowIndex(nextIndex)
-    }
-  })
-
   return (
     <div className="relative min-h-screen overflow-x-hidden">
       {/* Hero Section */}
@@ -305,107 +258,10 @@ export default function Landing({ onNavigate }: LandingProps) {
         </div>
       </section>
 
-      {/* Workflow Section — Cinematic Sticky Scroll */}
-      <section ref={workflowContainerRef} className="relative h-[250vh] bg-[#0A0B0D]">
-        <div className="sticky top-0 h-screen w-full flex items-center overflow-hidden">
-          {/* Subtle background glow for this section */}
-          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber/20 to-transparent" />
-          <div className="absolute top-1/2 left-1/4 -translate-y-1/2 w-[500px] h-[500px] bg-amber/5 rounded-full blur-[120px] pointer-events-none" />
+      {/* Workflow Section — Immersive Shader Pipeline */}
+      <FeatureShaderCards />
 
-          <div className="relative z-10 max-w-7xl mx-auto px-6 lg:px-12 w-full grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-24 items-center -mt-10">
-            
-            {/* Left side — Text Content */}
-            <div className="flex flex-col justify-center h-full">
-              <div className="mb-14">
-                <p className="font-mono text-[10px] text-amber tracking-[0.4em] uppercase mb-4 font-bold opacity-60">
-                  Confidentiality Pipeline
-                </p>
-                <h2 className="font-display font-bold text-4xl md:text-5xl text-text-primary tracking-tight leading-[1.1]">
-                  The Lifecycle of <br />
-                  <span className="text-text-secondary opacity-40 italic font-medium">Privacy.</span>
-                </h2>
-              </div>
-
-              <div className="relative min-h-[400px] [perspective:1000px]">
-                <AnimatePresence>
-                  <motion.div
-                    key={activeWorkflowIndex}
-                    initial={{ opacity: 0, y: 30, filter: 'blur(10px)' }}
-                    animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-                    exit={{ opacity: 0, y: -30, filter: 'blur(10px)' }}
-                    transition={{ duration: 0.5, ease: "easeOut" }}
-                    className="absolute inset-x-0 top-0"
-                  >
-                    <div className="flex items-center gap-4 mb-6">
-                      <span className="font-display font-black text-6xl text-white/5 tracking-tighter select-none">
-                        {workflowSteps[activeWorkflowIndex].number}
-                      </span>
-                      <h3 className="font-display font-bold text-2xl text-text-primary">
-                        {workflowSteps[activeWorkflowIndex].title}
-                      </h3>
-                    </div>
-                    <p className="font-mono text-sm text-text-secondary leading-relaxed max-w-md border-l-2 border-amber/30 pl-6">
-                      {workflowSteps[activeWorkflowIndex].description}
-                    </p>
-                  </motion.div>
-                </AnimatePresence>
-              </div>
-
-              {/* Step indicator dots */}
-              <div className="flex items-center gap-3 mt-12">
-                {workflowSteps.map((_, i) => (
-                  <div
-                    key={i}
-                    className={`h-1 transition-all duration-500 rounded-full ${
-                      i === activeWorkflowIndex ? 'w-8 bg-amber' : 'w-2 bg-border'
-                    }`}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {/* Right side — Image Visual */}
-            <div className="relative flex items-center justify-center [perspective:1000px]">
-              <div className="relative w-full max-w-[600px] aspect-[4/3]">
-                {/* Image frame with glass effect */}
-                <div className="absolute inset-0 rounded-[2.5rem] bg-gradient-to-br from-white/5 to-transparent border border-white/10 blur-[1px]" />
-                
-                <AnimatePresence>
-                  <motion.div
-                    key={activeWorkflowIndex}
-                    initial={{ opacity: 0, scale: 0.95, y: 20, filter: 'blur(20px)' }}
-                    animate={{ opacity: 1, scale: 1, y: 0, filter: 'blur(0px)' }}
-                    exit={{ opacity: 0, scale: 1.05, y: -20, filter: 'blur(20px)' }}
-                    transition={{ duration: 0.6, ease: "easeOut" }}
-                    className="absolute inset-0 flex items-center justify-center p-8"
-                  >
-                    <div className="relative w-full h-full group">
-                      {/* Inner image glow */}
-                      <div className="absolute inset-4 bg-amber/5 rounded-[2rem] blur-[60px] opacity-40" />
-                      
-                      <img
-                        src={workflowSteps[activeWorkflowIndex].image}
-                        alt={workflowSteps[activeWorkflowIndex].title}
-                        className="w-full h-full object-contain rounded-[2rem] drop-shadow-[0_25px_60px_rgba(0,0,0,0.9)] relative z-10"
-                      />
-                    </div>
-                  </motion.div>
-                </AnimatePresence>
-
-                {/* Decorative scanning line */}
-                <motion.div
-                  className="absolute left-0 right-0 h-px bg-amber/30 z-20"
-                  animate={{ top: ['0%', '100%', '0%'] }}
-                  transition={{ duration: 4, repeat: Infinity, ease: 'linear' }}
-                />
-              </div>
-            </div>
-
-          </div>
-        </div>
-      </section>
-
-      {/* Features Section */}
+      {/* Features Section - Bento */}
       <section className="relative py-16 px-6 border-t border-white/5 bg-[#0A0B0D]">
         <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-amber/5 to-transparent pointer-events-none" />
         <div className="max-w-7xl mx-auto relative z-10">
@@ -462,25 +318,25 @@ export default function Landing({ onNavigate }: LandingProps) {
       </section>
 
       {/* CTA Section */}
-      <section className="py-20 px-6">
+      <section className="py-20 px-6 font-mono">
         <div className="max-w-3xl mx-auto text-center">
-          <div className="relative p-12 rounded-3xl border border-amber/20 bg-bg-card overflow-hidden">
+          <div className="relative p-12 rounded-[2.5rem] border border-amber/20 bg-bg-card overflow-hidden group">
             {/* Glow background */}
             <div className="absolute inset-0 bg-gradient-to-br from-amber/5 via-transparent to-transparent pointer-events-none" />
-            <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-64 h-64 rounded-full bg-amber/10 blur-3xl pointer-events-none" />
+            <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-64 h-64 rounded-full bg-amber/10 blur-3xl pointer-events-none group-hover:scale-110 transition-transform duration-1000" />
 
             <div className="relative z-10">
               <Shield size={40} className="text-amber mx-auto mb-6" fill="rgba(245,166,35,0.15)" />
-              <h2 className="font-display font-extrabold text-3xl md:text-4xl text-text-primary mb-4">
+              <h2 className="font-display font-extrabold text-3xl md:text-4xl text-text-primary mb-4 tracking-tight">
                 Ready to govern privately?
               </h2>
-              <p className="font-mono text-sm text-text-secondary mb-8 leading-relaxed">
+              <p className="text-sm text-text-secondary mb-8 leading-relaxed max-w-md mx-auto">
                 Connect your wallet and experience confidential DAO governance — live on Sepolia.
               </p>
               <Button
                 onClick={() => onNavigate('/dashboard')}
                 size="lg"
-                className="rounded-full px-10 text-base font-display font-bold shadow-[0_0_32px_rgba(245,166,35,0.3)]"
+                className="rounded-full px-12 text-base font-display font-bold shadow-[0_0_32px_rgba(245,166,35,0.3)] hover:scale-105 transition-all"
               >
                 Enter the DAO
                 <ChevronRight className="ml-1" size={18} />
@@ -491,7 +347,7 @@ export default function Landing({ onNavigate }: LandingProps) {
       </section>
 
       {/* Footer */}
-      <footer className="py-8 px-6 border-t border-border">
+      <footer className="py-8 px-6 border-t border-white/5 bg-[#0A0B0D]">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <Shield size={16} className="text-amber" />

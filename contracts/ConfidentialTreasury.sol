@@ -14,12 +14,15 @@ contract ConfidentialTreasury is ZamaEthereumConfig, ReentrancyGuard, IConfident
     // State
     // -------------------------------------------------------------------------
 
-    address public admin;
-    address public governance;
-    address public auditorAccess;
-
     mapping(address => bool) public members;
     mapping(address => euint64) private balances;
+
+    // -------------------------------------------------------------------------
+    // Events & Errors
+    // -------------------------------------------------------------------------
+
+    event Transfer(address indexed from, address indexed to);
+    error InsufficientBalance();
 
     // -------------------------------------------------------------------------
     // Modifiers
@@ -150,6 +153,39 @@ contract ConfidentialTreasury is ZamaEthereumConfig, ReentrancyGuard, IConfident
         // Also grant the AuditorAccess contract itself permission so it can
         // call FHE.makePubliclyDecryptable on the handle during requestAudit
         FHE.allow(balances[member], auditorAccess);
+    }
+
+    // -------------------------------------------------------------------------
+    // Confidential Transfer — NEW FEATURE
+    // -------------------------------------------------------------------------
+
+    /// @notice Transfer an encrypted amount from msg.sender to another member.
+    /// @param to              The recipient member.
+    /// @param encryptedAmount The FHE-encrypted amount to transfer.
+    /// @param inputProof      The ZK-proof for the encrypted input.
+    function transfer(address to, bytes calldata encryptedAmount, bytes calldata inputProof) external onlyMember {
+        if (!members[to]) revert NotMember();
+
+        euint64 amount = FHE.asEuint64(encryptedAmount, inputProof);
+        
+        // Check if sender has enough balance (homomorphically)
+        ebool canTransfer = FHE.le(amount, balances[msg.sender]);
+        
+        // Update sender balance: if canTransfer, subtract else keep
+        euint64 senderNewBal = FHE.select(canTransfer, FHE.sub(balances[msg.sender], amount), balances[msg.sender]);
+        FHE.allowThis(senderNewBal);
+        FHE.allow(senderNewBal, msg.sender);
+        balances[msg.sender] = senderNewBal;
+
+        // Update recipient balance: if canTransfer, add else keep current recipient balance
+        // Note: we must use select to ensure the recipient ONLY gets the funds if canTransfer is true
+        euint64 amountToAdd = FHE.select(canTransfer, amount, FHE.asEuint64(0));
+        euint64 recipientNewBal = FHE.add(balances[to], amountToAdd);
+        FHE.allowThis(recipientNewBal);
+        FHE.allow(recipientNewBal, to);
+        balances[to] = recipientNewBal;
+
+        emit Transfer(msg.sender, to);
     }
 
     // -------------------------------------------------------------------------

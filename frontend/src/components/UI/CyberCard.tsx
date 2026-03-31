@@ -49,19 +49,41 @@ export const CyberCard = ({
         className
       )}
     >
+      {/* Holographic Overlay */}
+      <div className="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-10 transition-opacity bg-gradient-to-br from-white via-transparent to-white" />
+      
+      {/* Scanlines */}
+      <div className="absolute inset-0 pointer-events-none opacity-[0.03] bg-[linear-gradient(transparent_50%,rgba(0,0,0,0.5)_50%)] bg-[length:100%_4px]" />
+
       {/* Corner Accents */}
       {accent && (
         <>
-          <div className={cn('absolute top-0 left-0 w-8 h-[2px]', accentColors[variant])} />
-          <div className={cn('absolute top-0 left-0 w-[2px] h-8', accentColors[variant])} />
-          <div className={cn('absolute bottom-0 right-0 w-8 h-[2px]', accentColors[variant])} />
-          <div className={cn('absolute bottom-0 right-0 w-[2px] h-8', accentColors[variant])} />
+          <motion.div 
+            animate={{ opacity: [0.3, 1, 0.3] }}
+            transition={{ duration: 3, repeat: Infinity }}
+            className={cn('absolute top-0 left-0 w-12 h-[2px]', accentColors[variant], "shadow-[0_0_10px_currentColor]")} 
+          />
+          <motion.div 
+            animate={{ opacity: [0.3, 1, 0.3] }}
+            transition={{ duration: 3, repeat: Infinity }}
+            className={cn('absolute top-0 left-0 w-[2px] h-12', accentColors[variant], "shadow-[0_0_10px_currentColor]")} 
+          />
+          <motion.div 
+            animate={{ opacity: [0.3, 1, 0.3] }}
+            transition={{ duration: 3, repeat: Infinity }}
+            className={cn('absolute bottom-0 right-0 w-12 h-[2px]', accentColors[variant], "shadow-[0_0_10px_currentColor]")} 
+          />
+          <motion.div 
+            animate={{ opacity: [0.3, 1, 0.3] }}
+            transition={{ duration: 3, repeat: Infinity }}
+            className={cn('absolute bottom-0 right-0 w-[2px] h-12', accentColors[variant], "shadow-[0_0_10px_currentColor]")} 
+          />
         </>
       )}
 
       {/* Scanning Line Effect */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden opacity-0 group-hover:opacity-100 transition-opacity duration-700">
-        <div className="w-full h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent absolute top-0 animate-[scan_3s_linear_infinite]" />
+        <div className="w-full h-[1px] bg-gradient-to-r from-transparent via-white/20 to-transparent absolute top-0 animate-scan-v" />
       </div>
 
       {/* Noise Overlay */}

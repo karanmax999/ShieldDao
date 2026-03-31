@@ -37,18 +37,24 @@ export const TerminalInput = ({
       )}
       <div
         className={cn(
-          'flex items-center gap-3 px-4 py-3 rounded-xl bg-bg-primary/60 border border-border transition-all duration-200',
+          'relative flex items-center gap-3 px-4 py-3 rounded-xl bg-bg-primary/60 border border-border transition-all duration-300 group focus-within:shadow-[0_0_30px_rgba(255,255,255,0.02)]',
           variantFocus[variant],
           className
         )}
       >
-        <span className={cn('font-mono text-sm select-none', prefixColor[variant])}>
+        {/* Holographic Overlay */}
+        <div className="absolute inset-0 rounded-xl pointer-events-none opacity-0 group-focus-within:opacity-10 transition-opacity bg-gradient-to-br from-white via-transparent to-white" />
+        <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/20 to-transparent opacity-0 group-focus-within:opacity-100 transition-opacity animate-pulse" />
+        
+        <span className={cn('font-mono text-sm select-none z-10', prefixColor[variant])}>
           {prefix}
         </span>
         <input
           {...props}
-          className="flex-1 bg-transparent border-none outline-none text-text-primary font-mono text-sm placeholder:text-text-muted/50"
+          className="flex-1 bg-transparent border-none outline-none text-text-primary font-mono text-sm placeholder:text-text-muted/50 z-10"
         />
+        {/* Bouncing Cursor Effect */}
+        <div className="w-[8px] h-[14px] bg-jade/40 animate-pulse group-focus-within:block hidden" />
       </div>
     </div>
   )

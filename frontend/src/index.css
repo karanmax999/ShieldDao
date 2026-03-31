@@ -95,3 +95,22 @@ body::before {
 ::-webkit-scrollbar       { width: 4px; }
 ::-webkit-scrollbar-track { background: var(--bg-primary); }
 ::-webkit-scrollbar-thumb { background: var(--border-active); border-radius: 2px; }
+
+@keyframes scan-v {
+  from { top: -100%; opacity: 0; }
+  50% { opacity: 1; }
+  to { top: 100%; opacity: 0; }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.animate-scan-v {
+  animation: scan-v 4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 20s linear infinite;
+}

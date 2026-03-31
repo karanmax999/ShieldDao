@@ -5,7 +5,8 @@ import { DecodingText } from '../components/UI/DecodingText'
 import { useContracts } from '../hooks/useContracts'
 import { useDAO } from '../context/DAOContext'
 import { useWallet } from '../hooks/useWallet'
-import { OperatorTerminal } from '../components/UI/OperatorTerminal.tsx'
+import { OperatorTerminal } from '../components/UI/OperatorTerminal'
+import { FeaturesSection } from '../components/UI/FeaturesSection'
 import { cn } from '../lib/utils'
 
 export default function Dashboard() {
@@ -184,6 +185,9 @@ export default function Dashboard() {
           </div>
         </CyberCard>
       </div>
+
+      {/* Advanced Protocol Features */}
+      <FeaturesSection />
 
       {/* Operator Terminal (Admin Only) */}
       {isConnected && address?.toLowerCase() === adminAddress?.toLowerCase() && (

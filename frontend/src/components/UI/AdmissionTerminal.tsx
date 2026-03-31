@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Shield, AlertTriangle, ChevronRight, Zap, Loader2 } from 'lucide-react'
 import { CyberCard } from './CyberCard'
 import { Button } from './button'
+import { TerminalLog, type TerminalLogHandle } from './TerminalLog'
 
 interface AdmissionTerminalProps {
   address?: string | null
@@ -10,22 +11,38 @@ interface AdmissionTerminalProps {
 }
 
 export const AdmissionTerminal = ({ address, onEnlist }: AdmissionTerminalProps) => {
-  const [status, setStatus] = useState<'unauthorized' | 'pending'>('unauthorized')
+  const [status, setStatus] = useState<'unauthorized' | 'pending' | 'done'>('unauthorized')
+  const logRef = useRef<TerminalLogHandle>(null)
 
-  const handleEnlist = () => {
+  const handleEnlist = async () => {
+    if (!address) return
     setStatus('pending')
     
-    // Mock the "Asking System" by pushing to a shared local queue
-    try {
-      const saved = localStorage.getItem('shield_pending_enlistments')
-      const reqs = saved ? JSON.parse(saved) : []
-      if (!reqs.includes(address)) {
-        reqs.push(address)
-        localStorage.setItem('shield_pending_enlistments', JSON.stringify(reqs))
-      }
-      window.dispatchEvent(new CustomEvent('shield_new_enlistment'))
-      onEnlist()
-    } catch (e) {}
+    logRef.current?.addLog(`Initializing guest enrollment for ${address.slice(0, 8)}...`, 'info')
+    
+    setTimeout(() => {
+      logRef.current?.addLog("Generating non-interactive zero-knowledge proof...", "pending")
+    }, 800)
+
+    setTimeout(() => {
+      logRef.current?.addLog("Identity proof generated. Encrypting metadata...", "pending")
+    }, 1800)
+
+    setTimeout(() => {
+      try {
+        const saved = localStorage.getItem('shield_pending_enlistments')
+        const reqs = saved ? JSON.parse(saved) : []
+        if (!reqs.includes(address)) {
+          reqs.push(address)
+          localStorage.setItem('shield_pending_enlistments', JSON.stringify(reqs))
+        }
+        window.dispatchEvent(new CustomEvent('shield_new_enlistment'))
+        
+        logRef.current?.addLog("Broadcast successful. Awaiting Operator authorization.", "success")
+        setStatus('done')
+        onEnlist()
+      } catch (e) {}
+    }, 3500)
   }
 
   return (
@@ -102,6 +119,10 @@ export const AdmissionTerminal = ({ address, onEnlist }: AdmissionTerminalProps)
               </motion.div>
             )}
           </AnimatePresence>
+
+          <div className="mt-8">
+            <TerminalLog ref={logRef} className="bg-black/60 min-h-[160px]" />
+          </div>
 
           <div className="flex items-center justify-center gap-4 pt-4">
              <div className="flex items-center gap-2 text-[9px] font-mono text-text-muted uppercase">

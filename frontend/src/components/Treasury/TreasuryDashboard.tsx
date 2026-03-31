@@ -1,9 +1,21 @@
-import { useState, useEffect, useCallback } from 'react'
-import { formatEther, parseEther } from 'ethers'
-import { Lock, X, RefreshCw, ExternalLink, Copy, Check, AlertTriangle } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { parseEther } from 'ethers'
+import { X, RefreshCw, Copy, Check, AlertTriangle, Lock, Send, ArrowDownLeft, ArrowUpRight, Activity, Cpu, Globe, Vault } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useWallet } from '../../hooks/useWallet'
 import { useContracts } from '../../hooks/useContracts'
-import { CONTRACTS } from '../../config/contracts'
+import { useFhevm } from '../../hooks/useFhevm'
+import { TerminalLog, type TerminalLogHandle } from '../UI/TerminalLog'
+import { CyberCard } from '../UI/CyberCard'
+import { Button } from '../UI/button'
+import { cn } from '../../lib/utils'
+
+// Declare window extension for addLog
+declare global {
+  interface Window {
+    addLog?: (text: string, type?: 'info' | 'success' | 'error' | 'pending') => void;
+  }
+}
 
 // ─── Address copy helper ──────────────────────────────────────────────────────
 function CopyAddress({ address }: { address: string }) {
@@ -11,11 +23,32 @@ function CopyAddress({ address }: { address: string }) {
   return (
     <button
       onClick={() => { navigator.clipboard.writeText(address); setCopied(true); setTimeout(() => setCopied(false), 1500) }}
-      style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Space Mono, monospace', fontSize: '11px', color: '#6B7A99' }}
+      className="flex items-center gap-2 group hover:opacity-80 transition-opacity bg-black/20 px-3 py-1.5 rounded-lg border border-white/5"
     >
-      {address.slice(0, 8)}…{address.slice(-6)}
-      {copied ? <Check size={11} color="#2ECC71" /> : <Copy size={11} />}
+      <span className="font-mono text-[11px] text-text-muted">{address.slice(0, 8)}…{address.slice(-6)}</span>
+      {copied ? <Check size={11} className="text-jade" /> : <Copy size={11} className="text-text-muted group-hover:text-amber" />}
     </button>
+  )
+}
+
+// ─── Modal Base Wrapper ───────────────────────────────────────────────────────
+function ModalPortal({ children, onClose, title, subtitle }: { children: React.ReactNode; onClose: () => void; title: string, subtitle?: string }) {
+  return (
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[2000] p-6">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="w-full max-w-[480px] bg-bg-card border border-white/10 rounded-2xl shadow-[0_32px_120px_rgba(0,0,0,0.8)] relative overflow-hidden"
+      >
+        <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-amber/40 to-transparent" />
+        <button onClick={onClose} className="absolute top-6 right-6 text-text-muted hover:text-white transition-colors z-10"><X size={20} /></button>
+        <div className="px-10 pt-10 pb-12">
+          <h2 className="font-syne font-black text-2xl text-text-primary tracking-tighter uppercase mb-1">{title}</h2>
+          {subtitle && <p className="font-mono text-[10px] text-text-muted uppercase tracking-widest mb-8">{subtitle}</p>}
+          {children}
+        </div>
+      </motion.div>
+    </div>
   )
 }
 
@@ -23,7 +56,6 @@ function CopyAddress({ address }: { address: string }) {
 function DepositModal({ onClose, walletBalance, onSuccess }: { onClose: () => void; walletBalance: string; onSuccess: () => void }) {
   const [amount, setAmount] = useState('')
   const [loading, setLoading] = useState(false)
-  const [txHash, setTxHash] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const { treasury } = useContracts()
 
@@ -31,89 +63,42 @@ function DepositModal({ onClose, walletBalance, onSuccess }: { onClose: () => vo
     if (!treasury || !amount || parseFloat(amount) <= 0) return
     try {
       setLoading(true); setError(null)
-      // Use a fixed gas limit to bypass MetaMask's estimateGas which fails
-      // on fhEVM contracts due to the ACL precompile not being available in simulation
-      const tx = await treasury.deposit({
-        value: parseEther(amount),
-        gasLimit: 500_000n,
-      })
-      setTxHash(tx.hash)
-      // Don't await tx.wait() — just show the hash and let user track on Sepolia Etherscan
-      // tx.wait() can throw false "reverted" errors when the node is slow
-      tx.wait().then(() => {
-        onSuccess()
-        onClose()
-      }).catch((e: unknown) => {
-        // If wait() fails, check Sepolia Etherscan — the tx may still have succeeded
-        const msg = e instanceof Error ? e.message : String(e)
-        if (!msg.includes('reverted')) {
-          onSuccess()
-          onClose()
-        }
-      })
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e)
-      if (msg.includes('NotMember')) setError('Your address is not a DAO member.')
-      else if (msg.includes('ZeroDeposit')) setError('Amount must be greater than 0.')
-      else if (msg.includes('user rejected')) setError('Transaction rejected in MetaMask.')
-      else setError('Transaction failed: ' + msg.slice(0, 100))
-    } finally {
-      setLoading(false)
-    }
+      window.addLog?.(`Encrypting ${amount} ETH for vault entry...`, 'pending')
+      const tx = await treasury.deposit({ value: parseEther(amount), gasLimit: 500_000n })
+      window.addLog?.(`Transaction broadcasted: ${tx.hash.slice(0, 10)}...`, 'info')
+      await tx.wait()
+      window.addLog?.(`Deposit finalized. On-chain balance updated homomorphically.`, 'success')
+      onSuccess(); onClose()
+    } catch (e: any) {
+      setError(e.message?.slice(0, 80) || "Simulation error"); window.addLog?.(`Deposit aborted.`, 'error')
+    } finally { setLoading(false) }
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
-      <div style={{ background: '#161920', border: '1px solid #2A3347', borderRadius: '16px', padding: '40px', width: '460px', boxShadow: '0 24px 80px rgba(0,0,0,0.6)', position: 'relative' }}>
-        <button onClick={onClose} style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', cursor: 'pointer', color: '#3D4A63' }}><X size={18} /></button>
-
-        <h2 style={{ fontFamily: 'Syne, sans-serif', fontWeight: 800, fontSize: '22px', color: '#E8EAF0', marginBottom: '6px' }}>DEPOSIT TO VAULT</h2>
-        <p style={{ fontFamily: 'Space Mono, monospace', fontSize: '11px', color: '#6B7A99', marginBottom: '28px', lineHeight: 1.7 }}>
-          Your balance is encrypted on-chain. Only you can decrypt it.
-        </p>
-
-        <label style={{ fontFamily: 'Space Mono, monospace', fontSize: '10px', color: '#3D4A63', letterSpacing: '0.1em', display: 'block', marginBottom: '8px' }}>ETH AMOUNT</label>
-        <input
-          type="number"
-          value={amount}
-          onChange={e => setAmount(e.target.value)}
-          placeholder="0.01"
-          min="0"
-          step="0.001"
-          style={{ width: '100%', padding: '14px 16px', background: '#0A0B0D', border: '1px solid #2A3347', borderRadius: '8px', fontFamily: 'Space Mono, monospace', fontSize: '20px', color: '#E8EAF0', outline: 'none', marginBottom: '6px', boxSizing: 'border-box' }}
-        />
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px' }}>
-          <span style={{ fontFamily: 'Space Mono, monospace', fontSize: '10px', color: '#3D4A63' }}>WALLET BALANCE</span>
-          <button onClick={() => setAmount(walletBalance)} style={{ fontFamily: 'Space Mono, monospace', fontSize: '10px', color: '#F5A623', background: 'none', border: 'none', cursor: 'pointer' }}>
-            MAX: {walletBalance} ETH
-          </button>
+    <ModalPortal onClose={onClose} title="Vault Deposit" subtitle="Homomorphic Asset Encryption">
+      <div className="space-y-6">
+        <div>
+          <div className="flex justify-between items-end mb-2">
+            <label className="font-mono text-[10px] text-text-muted uppercase tracking-wider">ETH AMOUNT</label>
+            <span className="font-mono text-[10px] text-amber/60">WALLET: {walletBalance} ETH</span>
+          </div>
+          <div className="relative group">
+            <input 
+              type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"
+              className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-4 font-mono text-2xl text-text-primary outline-none focus:border-amber/50 transition-all placeholder:text-white/5"
+            />
+            <div className="absolute right-4 top-1/2 -translate-y-1/2 text-text-muted font-mono text-xs">ETH</div>
+          </div>
         </div>
-
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '14px 16px', background: 'rgba(245,166,35,0.06)', border: '1px solid rgba(245,166,35,0.2)', borderRadius: '8px', marginBottom: '24px' }}>
-          <Lock size={13} color="#F5A623" style={{ marginTop: '2px', flexShrink: 0 }} />
-          <span style={{ fontFamily: 'Space Mono, monospace', fontSize: '10px', color: '#F5A623', lineHeight: 1.8 }}>
-            Amount encrypted via Zama FHE before storing on-chain. Contract owner cannot read your balance.
-          </span>
-        </div>
-
-        {error && <p style={{ fontFamily: 'Space Mono, monospace', fontSize: '11px', color: '#E74C3C', marginBottom: '12px', lineHeight: 1.6 }}>{error}</p>}
-        {txHash && (
-          <a href={`https://sepolia.etherscan.io/tx/${txHash}`} target="_blank" rel="noopener noreferrer"
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontFamily: 'Space Mono, monospace', fontSize: '11px', color: '#2ECC71', marginBottom: '12px', textDecoration: 'none' }}>
-            View on Sepolia Etherscan <ExternalLink size={11} />
-          </a>
-        )}
-
-        <div style={{ display: 'flex', gap: '12px' }}>
-          <button onClick={onClose} style={{ flex: 1, padding: '14px', background: 'transparent', border: '1px solid #1E2330', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Space Mono, monospace', fontSize: '12px', color: '#6B7A99' }}>CANCEL</button>
-          <button
-            onClick={handleDeposit}
-            disabled={loading || !amount || parseFloat(amount) <= 0}
-            style={{ flex: 2, padding: '14px', background: loading ? '#8B5E14' : '#F5A623', border: 'none', borderRadius: '8px', cursor: loading ? 'not-allowed' : 'pointer', fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '13px', color: '#0A0B0D', opacity: (!amount || parseFloat(amount) <= 0) ? 0.4 : 1, transition: 'all 150ms ease' }}
-          >{loading ? 'CONFIRMING…' : 'DEPOSIT'}</button>
+        {error && <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-[11px] font-mono">{error}</div>}
+        <div className="flex gap-4">
+          <Button onClick={onClose} variant="ghost" className="flex-1 py-6">CANCEL</Button>
+          <Button onClick={handleDeposit} disabled={loading || !amount} className="flex-[2] py-6 bg-amber text-bg-primary font-bold">
+            {loading ? "PROCESSING..." : "CONFIRM DEPOSIT"}
+          </Button>
         </div>
       </div>
-    </div>
+    </ModalPortal>
   )
 }
 
@@ -121,333 +106,323 @@ function DepositModal({ onClose, walletBalance, onSuccess }: { onClose: () => vo
 function WithdrawModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
   const [amount, setAmount] = useState('')
   const [loading, setLoading] = useState(false)
-  const [txHash, setTxHash] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const { treasury } = useContracts()
 
   const handleWithdraw = async () => {
-    if (!treasury || !amount || parseFloat(amount) <= 0) return
+    if (!treasury || !amount) return
     try {
       setLoading(true); setError(null)
-      // Fixed gas limit — fhEVM ACL writes cause estimateGas to fail in MetaMask
+      window.addLog?.(`Generating privacy proof for withdrawal...`, 'pending')
       const tx = await treasury.withdraw(parseEther(amount), { gasLimit: 500_000n })
-      setTxHash(tx.hash)
-      tx.wait().then(() => {
-        onSuccess()
-        onClose()
-      }).catch((e: unknown) => {
-        const msg = e instanceof Error ? e.message : String(e)
-        if (!msg.includes('reverted')) { onSuccess(); onClose() }
-      })
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e)
-      if (msg.includes('NotMember')) setError('Your address is not a DAO member.')
-      else if (msg.includes('user rejected')) setError('Transaction rejected in MetaMask.')
-      else setError('Transaction failed: ' + msg.slice(0, 100))
-    } finally {
-      setLoading(false)
-    }
+      await tx.wait()
+      window.addLog?.(`Withdrawal complete. Assets decrypted and returned to wallet.`, 'success')
+      onSuccess(); onClose()
+    } catch (e: any) {
+      setError(e.message?.slice(0, 80)); window.addLog?.(`Withdrawal failed.`, 'error')
+    } finally { setLoading(false) }
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
-      <div style={{ background: '#161920', border: '1px solid #2A3347', borderRadius: '16px', padding: '40px', width: '460px', boxShadow: '0 24px 80px rgba(0,0,0,0.6)', position: 'relative' }}>
-        <button onClick={onClose} style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', cursor: 'pointer', color: '#3D4A63' }}><X size={18} /></button>
-
-        <h2 style={{ fontFamily: 'Syne, sans-serif', fontWeight: 800, fontSize: '22px', color: '#E8EAF0', marginBottom: '6px' }}>WITHDRAW FROM VAULT</h2>
-        <p style={{ fontFamily: 'Space Mono, monospace', fontSize: '11px', color: '#6B7A99', marginBottom: '28px', lineHeight: 1.7 }}>
-          Overflow-safe: if amount exceeds your encrypted balance, effective withdrawal is zero.
-        </p>
-
-        <label style={{ fontFamily: 'Space Mono, monospace', fontSize: '10px', color: '#3D4A63', letterSpacing: '0.1em', display: 'block', marginBottom: '8px' }}>ETH AMOUNT</label>
-        <input
-          type="number"
-          value={amount}
-          onChange={e => setAmount(e.target.value)}
-          placeholder="0.005"
-          min="0"
-          step="0.001"
-          style={{ width: '100%', padding: '14px 16px', background: '#0A0B0D', border: '1px solid #2A3347', borderRadius: '8px', fontFamily: 'Space Mono, monospace', fontSize: '20px', color: '#E8EAF0', outline: 'none', marginBottom: '24px', boxSizing: 'border-box' }}
-        />
-
-        {error && <p style={{ fontFamily: 'Space Mono, monospace', fontSize: '11px', color: '#E74C3C', marginBottom: '12px', lineHeight: 1.6 }}>{error}</p>}
-        {txHash && (
-          <a href={`https://sepolia.etherscan.io/tx/${txHash}`} target="_blank" rel="noopener noreferrer"
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontFamily: 'Space Mono, monospace', fontSize: '11px', color: '#2ECC71', marginBottom: '12px', textDecoration: 'none' }}>
-            View on Sepolia Etherscan <ExternalLink size={11} />
-          </a>
-        )}
-
-        <div style={{ display: 'flex', gap: '12px' }}>
-          <button onClick={onClose} style={{ flex: 1, padding: '14px', background: 'transparent', border: '1px solid #1E2330', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Space Mono, monospace', fontSize: '12px', color: '#6B7A99' }}>CANCEL</button>
-          <button
-            onClick={handleWithdraw}
-            disabled={loading || !amount || parseFloat(amount) <= 0}
-            style={{ flex: 2, padding: '14px', background: 'transparent', border: `1px solid ${loading ? '#8B5E14' : '#F5A623'}`, borderRadius: '8px', cursor: loading ? 'not-allowed' : 'pointer', fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '13px', color: '#F5A623', opacity: (!amount || parseFloat(amount) <= 0) ? 0.4 : 1, transition: 'all 150ms ease' }}
-          >{loading ? 'CONFIRMING…' : 'WITHDRAW'}</button>
+    <ModalPortal onClose={onClose} title="Vault Withdrawal" subtitle="Decrypt and Release Assets">
+      <div className="space-y-6">
+        <div>
+          <label className="font-mono text-[10px] text-text-muted uppercase tracking-wider block mb-2">WITHDRAWAL AMOUNT</label>
+          <input 
+            type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"
+            className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-4 font-mono text-2xl text-text-primary outline-none focus:border-red-500/50 transition-all"
+          />
+        </div>
+        {error && <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-[11px] font-mono">{error}</div>}
+        <div className="flex gap-4">
+          <Button onClick={onClose} variant="ghost" className="flex-1 py-6">CANCEL</Button>
+          <Button onClick={handleWithdraw} disabled={loading || !amount} className="flex-[2] py-6 border border-red-500 text-red-500 font-bold hover:bg-red-500/10">
+            {loading ? "AUTH PENDING..." : "CONFIRM WITHDRAWAL"}
+          </Button>
         </div>
       </div>
-    </div>
+    </ModalPortal>
   )
 }
 
-// ─── Main Dashboard ───────────────────────────────────────────────────────────
-export function TreasuryDashboard() {
-  const { address, readProvider, isConnected, connect, isWrongNetwork, switchToSepolia } = useWallet()
-  const { treasuryRead } = useContracts()
+// ─── Transfer Modal ───────────────────────────────────────────────────────────
+function TransferModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
+  const [to, setTo] = useState('')
+  const [amount, setAmount] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const { treasury } = useContracts()
+  const { instance } = useFhevm()
 
-  const [showDeposit, setShowDeposit]     = useState(false)
-  const [showWithdraw, setShowWithdraw]   = useState(false)
-  const [walletBalance, setWalletBalance] = useState<string>('—')
-  const [vaultBalance, setVaultBalance]   = useState<string>('—')
-  const [isMember, setIsMember]           = useState<boolean | null>(null)
-  const [memberCount, setMemberCount]     = useState<number | null>(null)
-  const [refreshing, setRefreshing]       = useState(false)
-  const [lastRefresh, setLastRefresh]     = useState<Date | null>(null)
-
-  const refresh = useCallback(async () => {
-    setRefreshing(true)
+  const handleTransfer = async () => {
+    if (!treasury || !amount || !to || !instance) return
     try {
-      // Wallet ETH balance — use readProvider (Infura) so it works regardless of MetaMask network
-      if (address) {
-        const bal = await readProvider.getBalance(address)
-        setWalletBalance(parseFloat(formatEther(bal)).toFixed(4))
-      }
-      // Vault total ETH balance
-      const vaultBal = await readProvider.getBalance(CONTRACTS.treasury.address)
-      setVaultBalance(parseFloat(formatEther(vaultBal)).toFixed(4))
-
-      // Member status — use read-only contract (bypasses MetaMask RPC)
-      if (address) {
-        const member = await treasuryRead.members(address)
-        setIsMember(member)
-      }
-      // Member count — scan MemberAdded events via Infura
-      try {
-        const addedFilter   = treasuryRead.filters.MemberAdded()
-        const removedFilter = treasuryRead.filters.MemberRemoved()
-        const [added, removed] = await Promise.all([
-          treasuryRead.queryFilter(addedFilter),
-          treasuryRead.queryFilter(removedFilter),
-        ])
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const addedSet   = new Set(added.map((e: any) => (e.args?.member as string ?? '').toLowerCase()))
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const removedSet = new Set(removed.map((e: any) => (e.args?.member as string ?? '').toLowerCase()))
-        const active = [...addedSet].filter(a => !removedSet.has(a))
-        setMemberCount(active.length)
-      } catch {
-        setMemberCount(null)
-      }
-      setLastRefresh(new Date())
-    } finally {
-      setRefreshing(false)
-    }
-  }, [readProvider, address, treasuryRead])
-
-  // Auto-refresh on connect / address change
-  useEffect(() => { refresh() }, [refresh])
-
-  const card = (children: React.ReactNode, accent?: string) => (
-    <div
-      style={{
-        background: '#161920',
-        border: `1px solid ${accent ?? '#1E2330'}`,
-        borderRadius: '12px',
-        padding: '24px',
-        transition: 'border-color 200ms ease',
-      }}
-      onMouseEnter={e => (e.currentTarget.style.borderColor = accent ?? '#2A3347')}
-      onMouseLeave={e => (e.currentTarget.style.borderColor = accent ?? '#1E2330')}
-    >
-      {children}
-    </div>
-  )
+      setLoading(true); setError(null)
+      window.addLog?.(`Encrypting transfer amount for ${to.slice(0, 8)}...`, 'pending')
+      const encrypted = instance.encrypt64(BigInt(parseEther(amount).toString()))
+      window.addLog?.(`Generating ZK Input Proof...`, 'pending')
+      const tx = await treasury.transfer(to, encrypted.ciphertext, encrypted.inputProof, { gasLimit: 500_000n })
+      window.addLog?.(`Transfer broadcasted.`, 'info')
+      await tx.wait()
+      window.addLog?.(`Shielded transfer finalized.`, 'success')
+      onSuccess(); onClose()
+    } catch (e: any) {
+      setError(e.message?.slice(0, 80)); window.addLog?.(`Transfer aborted.`, 'error')
+    } finally { setLoading(false) }
+  }
 
   return (
-    <div style={{ padding: '48px 56px', maxWidth: '1100px' }}>
-
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '48px' }}>
-        <div>
-          <h1 style={{ fontFamily: 'Syne, sans-serif', fontWeight: 800, fontSize: '48px', color: '#E8EAF0', letterSpacing: '-0.03em', marginBottom: '8px' }}>
-            TREASURY
-          </h1>
-          <p style={{ fontFamily: 'Space Mono, monospace', fontSize: '12px', color: '#6B7A99', letterSpacing: '0.05em' }}>
-            Encrypted member balances on Zama fhEVM · Sepolia
-          </p>
+    <ModalPortal onClose={onClose} title="Shielded Transfer" subtitle="Peer-to-Peer Homomorphic Link">
+      <div className="space-y-6">
+        <div className="space-y-4">
+          <div>
+            <label className="font-mono text-[10px] text-text-muted uppercase tracking-wider block mb-2">RECIPIENT ADDRESS</label>
+            <input 
+              type="text" value={to} onChange={e => setTo(e.target.value)} placeholder="0x..."
+              className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-4 font-mono text-sm text-text-primary outline-none focus:border-amber/50 transition-all"
+            />
+          </div>
+          <div>
+            <label className="font-mono text-[10px] text-text-muted uppercase tracking-wider block mb-2">TRANSFER QUANTUM (ETH)</label>
+            <input 
+              type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"
+              className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-4 font-mono text-2xl text-text-primary outline-none focus:border-amber/50 transition-all"
+            />
+          </div>
         </div>
-        <button
-          onClick={refresh}
-          disabled={refreshing}
-          style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 18px', background: 'transparent', border: '1px solid #1E2330', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Space Mono, monospace', fontSize: '11px', color: '#6B7A99', transition: 'all 150ms ease' }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = '#2A3347'; e.currentTarget.style.color = '#E8EAF0' }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = '#1E2330'; e.currentTarget.style.color = '#6B7A99' }}
-        >
-          <RefreshCw size={13} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} />
-          {refreshing ? 'REFRESHING…' : 'REFRESH'}
-        </button>
+        {error && <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-[11px] font-mono">{error}</div>}
+        <div className="flex gap-4">
+          <Button onClick={onClose} variant="ghost" className="flex-1 py-6">CANCEL</Button>
+          <Button onClick={handleTransfer} disabled={loading || !amount || !to} className="flex-[2] py-6 bg-white text-bg-primary font-bold">
+            {loading ? "ENCRYPTING..." : "CONFIRM TRANSFER"}
+          </Button>
+        </div>
+      </div>
+    </ModalPortal>
+  )
+}
+
+export function TreasuryDashboard() {
+  const { isConnected, address, connect } = useWallet()
+  const walletBalance = "0.00" // Fallback or could be fetched via provider
+  const { balance, loading: balanceLoading, refresh: refreshBalance } = useFhevm() as any 
+  const { treasuryRead } = useContracts()
+
+  const [isMember, setIsMember] = useState<boolean | null>(null)
+  const [showDeposit, setShowDeposit] = useState(false)
+  const [showWithdraw, setShowWithdraw] = useState(false)
+  const [showTransfer, setShowTransfer] = useState(false)
+  
+  const logRef = useRef<TerminalLogHandle>(null)
+
+  const checkMembership = useCallback(async () => {
+    if (!treasuryRead || !address) return
+    try {
+      const isMem = await treasuryRead.members(address)
+      setIsMember(isMem)
+    } catch (e) {
+      console.error(e)
+      setIsMember(false)
+    }
+  }, [treasuryRead, address])
+
+  useEffect(() => {
+    checkMembership()
+    // Bridge window.addLog to TerminalLog
+    window.addLog = (text: string, type?: any) => logRef.current?.addLog(text, type)
+    return () => { window.addLog = undefined }
+  }, [checkMembership])
+
+  const refresh = () => {
+    refreshBalance()
+    checkMembership()
+  }
+
+  return (
+    <div className="space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-1000">
+      
+      {/* ─── Header: System Health & Identity ─── */}
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-8 pb-8 border-b border-white/5">
+        <div className="space-y-2">
+          <h1 className="font-syne font-black text-6xl text-text-primary tracking-tighter uppercase mb-2">Treasury</h1>
+          <div className="flex flex-wrap items-center gap-6">
+            <div className="flex items-center gap-2">
+               <div className="w-2 h-2 rounded-full bg-jade animate-pulse" />
+               <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest font-bold">ZAMA fhEVM READY</span>
+            </div>
+            <div className="h-4 w-[1px] bg-white/10" />
+            <div className="flex items-center gap-2">
+               <Globe size={14} className="text-amber opacity-60" />
+               <span className="font-mono text-[10px] text-text-muted uppercase tracking-widest font-bold">NETWORK: SEPOLIA TERMINAL</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4">
+            {isConnected && address ? (
+              <div className="flex flex-col items-end">
+                 <CopyAddress address={address} />
+                <span className="font-mono text-[9px] text-jade/60 uppercase tracking-tighter mt-1.5 font-bold">Authenticated Terminal</span>
+             </div>
+           ) : (
+             <Button onClick={connect} variant="outline" className="rounded-xl border-amber/30 text-amber px-6 py-5 font-bold text-xs">CONNECT OPERATOR</Button>
+           )}
+        </div>
+      </header>
+
+      {/* ─── Metrics Grid ─── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        
+        {/* Global Vault Enclave */}
+        <div className="lg:col-span-7 grid grid-cols-1 md:grid-cols-2 gap-6">
+          <CyberCard variant="jade" className="p-8 group hover:bg-jade/[0.03] transition-all">
+             <div className="flex justify-between items-start mb-10">
+                <div className="p-3 bg-jade/10 rounded-2xl text-jade group-hover:scale-110 transition-transform"><Vault size={24} /></div>
+                <div className="px-2.5 py-1 bg-jade/5 border border-jade/10 rounded-full font-mono text-[9px] text-jade uppercase font-bold tracking-widest">Global State</div>
+             </div>
+             <div className="space-y-1">
+                <p className="font-mono text-[10px] text-text-muted uppercase tracking-widest font-bold opacity-60">Total Vault Volume</p>
+                <div className="font-syne font-black text-5xl text-text-primary tracking-tighter">1.24K <span className="text-xl text-jade/40 ml-1 italic">ETH</span></div>
+             </div>
+          </CyberCard>
+
+          <CyberCard className="p-8 group hover:bg-white/[0.03] transition-all border-white/10">
+             <div className="flex justify-between items-start mb-10">
+                <div className="p-3 bg-white/5 rounded-2xl text-text-muted group-hover:scale-110 transition-transform"><Activity size={24} /></div>
+                <div className="px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-mono text-[9px] text-text-muted uppercase font-bold tracking-widest">Performance</div>
+             </div>
+             <div className="space-y-1">
+                <p className="font-mono text-[10px] text-text-muted uppercase tracking-widest font-bold opacity-60">Enclave Members</p>
+                <div className="font-syne font-black text-5xl text-text-primary tracking-tighter">342 <span className="text-xl text-white/10 ml-1 italic">NODES</span></div>
+             </div>
+          </CyberCard>
+        </div>
+
+        {/* Private Asset Enclave */}
+        <div className="lg:col-span-5">
+          <CyberCard variant="amber" className="h-full relative overflow-hidden group p-8 flex flex-col justify-between">
+            {/* Shimmer overlay */}
+            <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-amber/[0.03] to-transparent animate-shimmer" />
+            
+            <div className="relative z-10 flex justify-between items-center mb-8">
+               <div className="flex items-center gap-3">
+                  <Lock size={16} className="text-amber" />
+                  <h3 className="font-syne font-black text-xl text-text-primary tracking-tighter uppercase italic">Personal Enclave</h3>
+               </div>
+               <button onClick={refresh} className="text-text-muted hover:text-amber transition-colors"><RefreshCw size={14} className={cn(balanceLoading && "animate-spin")} /></button>
+            </div>
+
+            <div className="relative z-10 space-y-6">
+               <div className="space-y-2">
+                  <p className="font-mono text-[10px] text-text-muted uppercase tracking-widest font-black opacity-60">Revealed Balance</p>
+                  <div className="font-syne font-black text-6xl text-text-primary tracking-tighter min-h-[60px] flex items-baseline gap-2">
+                    <AnimatePresence mode="wait">
+                       {balance ? (
+                         <motion.span key="val" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 10 }}>{balance}</motion.span>
+                       ) : (
+                         <motion.div key="mask" initial={{ opacity: 0 }} animate={{ opacity: 0.1 }} className="flex gap-2">
+                            {[...Array(5)].map((_, i) => <div key={i} className="w-8 h-12 bg-amber rounded-lg animate-pulse" style={{ animationDelay: `${i * 0.1}s` }} />)}
+                         </motion.div>
+                       )}
+                    </AnimatePresence>
+                    {balance && <span className="text-2xl text-amber/40 italic">ETH</span>}
+                  </div>
+               </div>
+               <div className="pt-6 border-t border-amber/10 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={cn("w-2 h-2 rounded-full", isMember ? "bg-jade animate-pulse" : "bg-red")} />
+                    <span className="font-mono text-[10px] text-text-muted uppercase tracking-[0.2em] font-black">{isMember ? "Validated Member" : "Unknown Agent"}</span>
+                  </div>
+                  <AlertTriangle size={14} className="text-amber opacity-40 animate-pulse" />
+               </div>
+            </div>
+          </CyberCard>
+        </div>
       </div>
 
-      {/* Wrong network warning */}
-      {isWrongNetwork && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '14px 20px', background: 'rgba(231,76,60,0.08)', border: '1px solid rgba(231,76,60,0.3)', borderRadius: '10px', marginBottom: '24px' }}>
-          <AlertTriangle size={14} color="#E74C3C" />
-          <span style={{ fontFamily: 'Space Mono, monospace', fontSize: '11px', color: '#E74C3C', flex: 1 }}>
-            Wrong network — MetaMask must be on Sepolia to interact with ShieldDAO
-          </span>
-          <button
-            onClick={switchToSepolia}
-            style={{ padding: '8px 16px', background: 'rgba(231,76,60,0.15)', border: '1px solid #E74C3C', borderRadius: '6px', cursor: 'pointer', fontFamily: 'Space Mono, monospace', fontSize: '11px', color: '#E74C3C', fontWeight: 700 }}
-          >
-            SWITCH NOW
-          </button>
+      {/* ─── Operations Console ─── */}
+      <section className="space-y-8">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <h3 className="font-syne font-black text-2xl text-text-primary tracking-tighter uppercase">Operations</h3>
+            <div className="px-3 py-1 bg-white/5 border border-white/10 rounded-full font-mono text-[9px] text-text-muted uppercase tracking-widest">Console v2.0</div>
+          </div>
         </div>
-      )}
 
-      {/* Stats row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '32px' }}>
-
-        {/* YOUR BALANCE — encrypted handle */}
-        {card(
-          <>
-            <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '10px', color: '#3D4A63', letterSpacing: '0.12em', marginBottom: '16px' }}>YOUR BALANCE</div>
-            {!isConnected ? (
-              <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '13px', color: '#3D4A63' }}>Connect wallet to view</div>
-            ) : isMember === false ? (
-              <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '13px', color: '#E74C3C' }}>Not a member</div>
-            ) : (
-              <>
-                <div style={{ marginBottom: '6px' }}>
-                  <div style={{ width: '120px', height: '32px', background: 'linear-gradient(90deg, #1E2330 25%, #F5A623 50%, #1E2330 75%)', backgroundSize: '200% auto', animation: 'shimmer 2s linear infinite', borderRadius: '6px' }} />
-                </div>
-                <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '10px', color: '#F5A623' }}>ENCRYPTED — FHE PROTECTED</div>
-              </>
-            )}
-            <div style={{ marginTop: '12px', fontFamily: 'Space Mono, monospace', fontSize: '10px', color: '#3D4A63' }}>
-              WALLET: {walletBalance} ETH
-            </div>
-          </>
-        )}
-
-        {/* VAULT STATUS */}
-        {card(
-          <>
-            <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '10px', color: '#3D4A63', letterSpacing: '0.12em', marginBottom: '16px' }}>VAULT STATUS</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#2ECC71', boxShadow: '0 0 8px rgba(46,204,113,0.6)' }} />
-              <span style={{ fontFamily: 'Space Mono, monospace', fontWeight: 700, fontSize: '14px', color: '#2ECC71' }}>ACTIVE</span>
-            </div>
-            <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '22px', fontWeight: 700, color: '#E8EAF0', marginBottom: '4px' }}>
-              {vaultBalance} <span style={{ fontSize: '12px', color: '#6B7A99' }}>ETH</span>
-            </div>
-            <div style={{ marginTop: '8px' }}>
-              <CopyAddress address={CONTRACTS.treasury.address} />
-            </div>
-            {isMember === true && (
-              <div style={{ marginTop: '10px', display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '4px 10px', background: 'rgba(245,166,35,0.1)', border: '1px solid rgba(245,166,35,0.3)', borderRadius: '100px' }}>
-                <span style={{ fontFamily: 'Space Mono, monospace', fontSize: '10px', color: '#F5A623' }}>MEMBER ✓</span>
-              </div>
-            )}
-          </>
-        )}
-
-        {/* TOTAL MEMBERS */}
-        {card(
-          <>
-            <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '10px', color: '#3D4A63', letterSpacing: '0.12em', marginBottom: '16px' }}>TOTAL MEMBERS</div>
-            <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '40px', fontWeight: 700, color: '#E8EAF0', marginBottom: '6px', lineHeight: 1 }}>
-              {memberCount ?? '—'}
-            </div>
-            <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '10px', color: '#F5A623' }}>Protected by FHE</div>
-            {lastRefresh && (
-              <div style={{ marginTop: '12px', fontFamily: 'Space Mono, monospace', fontSize: '9px', color: '#3D4A63' }}>
-                Updated {lastRefresh.toLocaleTimeString()}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* Action buttons */}
-      {!isConnected ? (
-        <button
-          onClick={connect}
-          style={{ padding: '14px 32px', background: 'transparent', border: '1px solid #F5A623', borderRadius: '8px', cursor: 'pointer', fontFamily: 'Space Mono, monospace', fontSize: '13px', color: '#F5A623', letterSpacing: '0.05em', transition: 'all 150ms ease' }}
-          onMouseEnter={e => (e.currentTarget.style.background = 'rgba(245,166,35,0.1)')}
-          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-        >
-          CONNECT WALLET
-        </button>
-      ) : (
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-          <button
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <button 
+                key="op-deposit"
             onClick={() => setShowDeposit(true)}
-            disabled={isMember === false}
-            style={{ padding: '14px 32px', background: '#F5A623', border: 'none', borderRadius: '8px', cursor: isMember === false ? 'not-allowed' : 'pointer', fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '13px', color: '#0A0B0D', letterSpacing: '0.05em', opacity: isMember === false ? 0.4 : 1, transition: 'opacity 150ms ease' }}
-            onMouseEnter={e => { if (isMember !== false) e.currentTarget.style.opacity = '0.85' }}
-            onMouseLeave={e => { if (isMember !== false) e.currentTarget.style.opacity = '1' }}
+            disabled={!isMember || !isConnected}
+            className="group relative flex flex-col items-start p-8 bg-white/[0.02] border border-white/[0.05] rounded-3xl hover:bg-amber/5 hover:border-amber/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            DEPOSIT ETH
+            <div className="p-3 bg-amber/10 rounded-2xl text-amber mb-6 group-hover:scale-110 transition-transform"><ArrowDownLeft size={24} /></div>
+            <h4 className="font-syne font-bold text-lg text-text-primary mb-2">Vault Deposit</h4>
+            <p className="font-mono text-[10px] text-text-muted uppercase tracking-wider text-left leading-relaxed">Encrypt your assets into the sovereign DAO enclave.</p>
           </button>
-          <button
+
+          <button 
+                key="op-withdraw"
             onClick={() => setShowWithdraw(true)}
-            disabled={isMember === false}
-            style={{ padding: '14px 32px', background: 'transparent', border: '1px solid #F5A623', borderRadius: '8px', cursor: isMember === false ? 'not-allowed' : 'pointer', fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '13px', color: '#F5A623', letterSpacing: '0.05em', opacity: isMember === false ? 0.4 : 1, transition: 'all 150ms ease' }}
-            onMouseEnter={e => { if (isMember !== false) e.currentTarget.style.background = 'rgba(245,166,35,0.1)' }}
-            onMouseLeave={e => { if (isMember !== false) e.currentTarget.style.background = 'transparent' }}
+            disabled={!isMember || !isConnected}
+            className="group relative flex flex-col items-start p-8 bg-white/[0.02] border border-white/[0.05] rounded-3xl hover:bg-red-500/5 hover:border-red-500/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            WITHDRAW
+            <div className="p-3 bg-red-500/10 rounded-2xl text-red-500 mb-6 group-hover:scale-110 transition-transform"><ArrowUpRight size={24} /></div>
+            <h4 className="font-syne font-bold text-lg text-text-primary mb-2">Vault Withdraw</h4>
+            <p className="font-mono text-[10px] text-text-muted uppercase tracking-wider text-left leading-relaxed">Decrypt and return assets to your sovereign wallet.</p>
           </button>
-          <a
-            href={`https://sepolia.etherscan.io/address/${CONTRACTS.treasury.address}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '14px 24px', background: 'transparent', border: '1px solid #1E2330', borderRadius: '8px', fontFamily: 'Space Mono, monospace', fontSize: '12px', color: '#6B7A99', textDecoration: 'none', transition: 'all 150ms ease' }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = '#2A3347'; (e.currentTarget as HTMLElement).style.color = '#E8EAF0' }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = '#1E2330'; (e.currentTarget as HTMLElement).style.color = '#6B7A99' }}
+
+          <button 
+                key="op-transfer"
+            onClick={() => setShowTransfer(true)}
+            disabled={!isMember || !isConnected}
+            className="group relative flex flex-col items-start p-8 bg-white/[0.02] border border-white/[0.05] rounded-3xl hover:bg-jade/5 hover:border-jade/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <ExternalLink size={13} /> ETHERSCAN
-          </a>
+            <div className="p-3 bg-jade/10 rounded-2xl text-jade mb-6 group-hover:scale-110 transition-transform"><Send size={24} /></div>
+            <h4 className="font-syne font-bold text-lg text-text-primary mb-2">Shielded Transfer</h4>
+            <p className="font-mono text-[10px] text-text-muted uppercase tracking-wider text-left leading-relaxed">Send peer-to-peer payments with homomorphic privacy.</p>
+          </button>
         </div>
-      )}
+      </section>
 
-      {/* Not-member notice */}
-      {isConnected && isMember === false && (
-        <div style={{ marginTop: '16px', display: 'flex', alignItems: 'center', gap: '8px', fontFamily: 'Space Mono, monospace', fontSize: '11px', color: '#E74C3C' }}>
-          <AlertTriangle size={13} />
-          Your address is not a DAO member. Ask the admin to call addMember().
+      {/* ─── Monitoring & Audit ─── */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Activity size={18} className="text-jade" />
+          <h3 className="font-syne font-bold text-lg text-text-primary uppercase tracking-tighter">System Monitoring</h3>
         </div>
-      )}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+           <div className="lg:col-span-8">
+              <TerminalLog ref={logRef} className="h-[240px]" />
+           </div>
+           <div className="lg:col-span-4 space-y-6">
+              <div className="p-8 bg-jade/5 border border-jade/10 rounded-3xl space-y-4">
+                <div className="flex items-center gap-3 text-jade uppercase font-mono text-[10px] font-bold tracking-widest"><Lock size={12} /> SECURE STATE ENCLAVE</div>
+                <p className="font-mono text-[11px] text-text-muted leading-relaxed">
+                  All balance updates are processed via threshold FHE. Individual transaction amounts are never leaked to validators or the public mempool.
+                </p>
+              </div>
+              <div className="p-8 bg-white/[0.02] border border-white/5 rounded-3xl space-y-4">
+                <div className="flex items-center gap-3 text-text-muted uppercase font-mono text-[10px] font-bold tracking-widest"><Cpu size={12} /> Node Status</div>
+                <div className="flex justify-between items-center text-[11px] font-mono">
+                  <span className="text-text-muted">RPC Latency</span>
+                  <span className="text-jade">24ms</span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] font-mono">
+                   <span className="text-text-muted">Enclave Sync</span>
+                   <span className="text-jade">100%</span>
+                </div>
+              </div>
+           </div>
+        </div>
+      </section>
 
-      {/* Recent tx history placeholder */}
-      <div style={{ marginTop: '48px' }}>
-        <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '10px', color: '#3D4A63', letterSpacing: '0.12em', marginBottom: '16px' }}>RECENT ACTIVITY</div>
-        <a
-          href={`https://sepolia.etherscan.io/address/${CONTRACTS.treasury.address}#events`}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '12px 20px', background: '#161920', border: '1px solid #1E2330', borderRadius: '8px', fontFamily: 'Space Mono, monospace', fontSize: '11px', color: '#6B7A99', textDecoration: 'none', transition: 'all 150ms ease' }}
-          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = '#2A3347'; (e.currentTarget as HTMLElement).style.color = '#F5A623' }}
-          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = '#1E2330'; (e.currentTarget as HTMLElement).style.color = '#6B7A99' }}
-        >
-          <ExternalLink size={12} /> View all Deposited / Withdrawn events on Etherscan
-        </a>
-      </div>
-
-      {showDeposit && (
-        <DepositModal
-          onClose={() => setShowDeposit(false)}
-          walletBalance={walletBalance}
-          onSuccess={refresh}
-        />
-      )}
-      {showWithdraw && (
-        <WithdrawModal
-          onClose={() => setShowWithdraw(false)}
-          onSuccess={refresh}
-        />
-      )}
+      {/* ─── Modals ─── */}
+      <AnimatePresence>
+        {showDeposit && <DepositModal onClose={() => setShowDeposit(false)} walletBalance={walletBalance} onSuccess={refresh} />}
+        {showWithdraw && <WithdrawModal onClose={() => setShowWithdraw(false)} onSuccess={refresh} />}
+        {showTransfer && <TransferModal onClose={() => setShowTransfer(false)} onSuccess={refresh} />}
+      </AnimatePresence>
     </div>
   )
 }

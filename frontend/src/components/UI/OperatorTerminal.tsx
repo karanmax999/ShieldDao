@@ -22,33 +22,49 @@ export const OperatorTerminal = () => {
   const logRef = useRef<TerminalLogHandle>(null)
 
   const loadData = useCallback(async () => {
-    if (!treasuryRead) return
     setLoading(true)
     try {
-      // Load current members
-      const filter = treasuryRead.filters.MemberAdded()
-      const events = await treasuryRead.queryFilter(filter)
-      
-      const members = events
-        .filter((e): e is EventLog => e instanceof EventLog)
-        .map(e => ({
-          address: e.args[0] as string,
-          role: 'MEMBER',
-          since: 'RECENT'
-        }))
-        
-      setRoster(members)
-
-      // Load pending from local storage (simulation of off-chain request queue)
+      // 1. Instantly load pending from local storage (off-chain queue)
       const saved = localStorage.getItem('shield_pending_enlistments')
+      let pendingReqs: string[] = []
       if (saved) {
-        const reqs = JSON.parse(saved)
-        // Filter out those who are already members
-        const memberAddresses = members.map(m => m.address.toLowerCase())
-        setRequests(reqs.filter((r: string) => !memberAddresses.includes(r.toLowerCase())))
+        pendingReqs = JSON.parse(saved)
+        setRequests(pendingReqs) // Show immediately for snappy UX
+      }
+
+      // 2. Load on-chain members
+      if (treasuryRead) {
+        try {
+          const filter = treasuryRead.filters.MemberAdded()
+          const events = await treasuryRead.queryFilter(filter)
+          
+          const members = events
+            .filter((e): e is EventLog => e instanceof EventLog)
+            .map(e => ({
+              address: e.args[0] as string,
+              role: 'MEMBER',
+              since: 'RECENT'
+            }))
+            
+          setRoster(members)
+
+          // 3. Filter out requests that are already approved members
+          if (pendingReqs.length > 0) {
+            const memberAddresses = members.map(m => m.address.toLowerCase())
+            const activeRequests = pendingReqs.filter(r => !memberAddresses.includes(r.toLowerCase()))
+            setRequests(activeRequests)
+            
+            // Clean up old requests from storage
+            if (activeRequests.length !== pendingReqs.length) {
+               localStorage.setItem('shield_pending_enlistments', JSON.stringify(activeRequests))
+            }
+          }
+        } catch (contractErr) {
+          console.warn("Failed to query on-chain members (RPC may be rate limited).", contractErr)
+        }
       }
     } catch (e) {
-      console.error("Failed to load operator data:", e)
+      console.error("Failed to parse operator data:", e)
     } finally {
       setLoading(false)
     }

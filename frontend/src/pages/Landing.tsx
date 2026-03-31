@@ -1,5 +1,4 @@
 import { ChevronRight, ExternalLink, Vote, Shield, Zap, Eye, Vault } from 'lucide-react'
-import { useScroll, AnimatePresence, useMotionValueEvent } from 'framer-motion'
 import { InfiniteSlider } from '../components/UI/infinite-slider'
 import { ProgressiveBlur } from '../components/UI/progressive-blur'
 import { Button } from '../components/UI/button'

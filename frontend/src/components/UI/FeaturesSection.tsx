@@ -1,9 +1,8 @@
 'use client'
-import { Activity, Map as MapIcon, MessageCircle, Shield, Lock, Zap } from 'lucide-react'
+import { Activity, Map as MapIcon, MessageCircle, Shield } from 'lucide-react'
 import DottedMap from 'dotted-map'
 import { Area, AreaChart, CartesianGrid } from 'recharts'
 import { type ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from './chart'
-import { cn } from '../../lib/utils'
 
 export function FeaturesSection() {
     return (
